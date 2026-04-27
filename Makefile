@@ -4,7 +4,7 @@ CXXFLAGS = -Wall -Wextra -std=c++17 -pthread
 LIBS = -lsfml-graphics -lsfml-window -lsfml-audio -lsfml-network -lsfml-system -lrt
 # LIBS = $(shell sdl2-config --libs) -lrt
 # LIBS = -lglfw -lGL -lrt
-LIBS = -lncurses -lrt
+#LIBS = -lncurses -lrt
 TARGETS = arbiter.out hip.out asp.out
 all: clean $(TARGETS)
 	@echo Build complete.
