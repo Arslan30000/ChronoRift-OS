@@ -114,10 +114,9 @@ int main() {
     ftruncate(shm_fd, sizeof(GameState));
     state = (GameState*)mmap(0, sizeof(GameState), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
     
-    // CRITICAL FIX: Wipe the memory clean BEFORE initializing the semaphores
+    // CRITICAL FIX 1: Wipe memory cleanly BEFORE semaphore initialization
     memset(state, 0, sizeof(GameState));
     
-    // Initialize semaphores AFTER the memory is clean
     sem_init(&state->mutex, 1, 1);
     sem_init(&state->action_sem, 1, 0); 
     
@@ -135,23 +134,42 @@ int main() {
         sem_wait(&state->mutex);
         bool someone_ready = false;
         
-        if (!state->ultimate_active && !state->pending_action.is_ready) {
+        // CRITICAL FIX 4: Check if anyone is currently ready (Time Freeze mechanism)
+        for(int i = 0; i < state->num_players; i++) {
+            if(state->players[i].is_alive && state->players[i].stamina >= state->players[i].max_stamina) someone_ready = true;
+        }
+        for(int i = 0; i < state->num_enemies; i++) {
+            if(state->enemies[i].is_alive && !state->enemies[i].is_stunned && state->enemies[i].stamina >= state->enemies[i].max_stamina) someone_ready = true;
+        }
+
+        // Only progress time if no one is waiting to take a turn
+        if (!state->ultimate_active && !state->pending_action.is_ready && !someone_ready) {
             for(int i = 0; i < state->num_players; i++) {
                 if(state->players[i].is_alive && state->players[i].stamina < state->players[i].max_stamina) {
                     state->players[i].stamina += state->players[i].speed;
-                    if(state->players[i].stamina >= state->players[i].max_stamina) someone_ready = true;
+                    // CRITICAL FIX 3: Clamp stamina strictly to max
+                    if(state->players[i].stamina >= state->players[i].max_stamina) {
+                        state->players[i].stamina = state->players[i].max_stamina;
+                        someone_ready = true; // Instantly freeze time for next iteration
+                    }
                 }
             }
             for(int i = 0; i < state->num_enemies; i++) {
                 if(state->enemies[i].is_alive && !state->enemies[i].is_stunned && state->enemies[i].stamina < state->enemies[i].max_stamina) {
                     state->enemies[i].stamina += state->enemies[i].speed;
-                    if(state->enemies[i].stamina >= state->enemies[i].max_stamina) someone_ready = true;
+                    // CRITICAL FIX 3: Clamp stamina strictly to max
+                    if(state->enemies[i].stamina >= state->enemies[i].max_stamina) {
+                        state->enemies[i].stamina = state->enemies[i].max_stamina;
+                        someone_ready = true; // Instantly freeze time for next iteration
+                    }
                 }
             }
         }
         sem_post(&state->mutex);
 
+        // Process Action Commitment
         if (someone_ready || state->pending_action.is_ready) {
+            // CRITICAL FIX 2: Non-blocking semaphore check prevents render thread starvation
             if (sem_trywait(&state->action_sem) == 0) { 
                 sem_wait(&state->mutex);
                 
@@ -172,6 +190,10 @@ int main() {
                     actor->stamina = 0;
                 } else if (msg.type == HEAL) {
                     actor->hp += actor->max_hp / 10;
+                    // CRITICAL FIX 3: Clamp HP healing strictly to max
+                    if (actor->hp > actor->max_hp) {
+                        actor->hp = actor->max_hp;
+                    }
                     actor->stamina = 0;
                 } else if (msg.type == SKIP) {
                     actor->stamina = actor->max_stamina / 2;
@@ -179,6 +201,7 @@ int main() {
 
                 if (target->hp <= 0) {
                     target->is_alive = false;
+                    target->hp = 0; // Prevent negative HP rendering
                     if (msg.sender_type == 0) allocate_weapon(actor, WEAPONS[rand() % 8]); 
                 }
 
