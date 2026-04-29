@@ -1,74 +1,138 @@
 #include "../shared.h"
 #include <iostream>
 
-GameState* state;
+GameState* state = NULL;
 
-// Asynchronous Stun Mechanic
+// ===================== STUN HANDLER =====================
 void handle_stun(int sig) {
-    if (sig == SIGUSR1) {
-        sem_wait(&state->mutex);
-        for(int i = 0; i < state->num_enemies; i++) {
-            if(state->enemies[i].process_id == getpid()) state->enemies[i].is_stunned = true;
-        }
-        sem_post(&state->mutex);
-    }
+    (void)sig;
+    // Async 3-second stun — blocks entire ASP process
+    sleep(3);
 }
 
+// ===================== ENEMY THREAD =====================
 void* enemy_thread(void* arg) {
     int id = *(int*)arg;
-    
-    while(!state->game_over) {
+
+    while (!state->game_over) {
+        bool my_turn = false;
+
         sem_wait(&state->mutex);
-        if(state->enemies[id].is_alive && !state->enemies[id].is_stunned && state->enemies[id].stamina >= state->enemies[id].max_stamina && !state->pending_action.is_ready) {
-            
-            // 3 Second Rule Logic handled by immediate execution here
-            int target = 0;
-            for(int i=0; i<state->num_players; i++) {
-                if(state->players[i].is_alive) { target = i; break; }
-            }
-            
-            state->pending_action.sender_type = 1;
-            state->pending_action.sender_id = id;
-            state->pending_action.target_id = target;
-            state->pending_action.type = STRIKE;
-            state->pending_action.is_ready = true;
-            
-            sem_post(&state->action_sem);
+        if (state->enemies[id].is_alive &&
+            !state->enemies[id].is_stunned &&
+            state->active_turn_type == 1 &&
+            state->active_turn_id == id &&
+            !state->pending_action.is_ready) {
+            my_turn = true;
         }
         sem_post(&state->mutex);
-        usleep(200000); 
+
+        if (!my_turn) {
+            usleep(150000);
+            continue;
+        }
+
+        // AI Decision making
+        sem_wait(&state->mutex);
+
+        // Find a random alive player target
+        int alive_players[MAX_PLAYERS];
+        int alive_count = 0;
+        for (int i = 0; i < state->num_players; i++) {
+            if (state->players[i].is_alive) {
+                alive_players[alive_count++] = i;
+            }
+        }
+
+        if (alive_count == 0) {
+            sem_post(&state->mutex);
+            usleep(100000);
+            continue;
+        }
+
+        int target = alive_players[rand() % alive_count];
+
+        // AI choice: 60% Strike, 10% Use Weapon, 30% Skip
+        int roll = rand() % 100;
+        ActionType chosen_action;
+        int weapon_id = 0;
+
+        if (roll < 60) {
+            chosen_action = ACT_STRIKE;
+        } else if (roll < 70) {
+            // Try to use a weapon if we have one
+            bool has_weapon = false;
+            for (int s = 0; s < INV_SLOTS; s++) {
+                if (state->enemies[id].inv.slots[s] != 0) {
+                    weapon_id = state->enemies[id].inv.slots[s];
+                    has_weapon = true;
+                    break;
+                }
+            }
+            chosen_action = has_weapon ? ACT_USE_WEAPON : ACT_STRIKE;
+        } else {
+            chosen_action = ACT_SKIP;
+        }
+
+        // Submit action
+        state->pending_action.sender_type = 1;
+        state->pending_action.sender_id = id;
+        state->pending_action.target_id = target;
+        state->pending_action.type = chosen_action;
+        state->pending_action.weapon_id = weapon_id;
+        state->pending_action.is_ready = true;
+        sem_post(&state->action_sem);
+
+        sem_post(&state->mutex);
+
+        usleep(200000);
     }
     return NULL;
 }
 
+// ===================== MAIN =====================
 int main() {
-    int shm_fd = shm_open("/chrono_shm", O_RDWR, 0666);
+    srand(ROLL_SEED + 1); // Slightly different seed for enemy randomness
+
+    int shm_fd = shm_open(SHM_NAME, O_RDWR, 0666);
+    if (shm_fd < 0) {
+        std::cerr << "Error: Cannot open shared memory. Start the Arbiter first!\n";
+        return 1;
+    }
     state = (GameState*)mmap(0, sizeof(GameState), PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
 
     signal(SIGUSR1, handle_stun);
 
+    // Register ASP
     sem_wait(&state->mutex);
-    state->asp_pid = getpid(); // Register for Ultimate Ability pausing
-    for(int i = 0; i < state->num_enemies; i++) {
-        state->enemies[i].id = i;
+    state->asp_pid = getpid();
+    // Set enemy process IDs
+    for (int i = 0; i < state->num_enemies; i++) {
         state->enemies[i].process_id = getpid();
-        state->enemies[i].hp = 150;
-        state->enemies[i].max_hp = 150;
-        state->enemies[i].damage = 17; // 23i-0572 Enemy Base
-        state->enemies[i].speed = 20;
-        state->enemies[i].stamina = 0;
-        state->enemies[i].max_stamina = 150;
-        state->enemies[i].is_alive = true;
-        state->enemies[i].is_stunned = false;
     }
+    state->asp_connected = true;
     sem_post(&state->mutex);
 
-    pthread_t tids[9];
-    int ids[9];
-    for(int i = 0; i < state->num_enemies; i++) {
+    std::cout << "[ASP] Automated Strategic Process connected. PID: " << getpid() << "\n";
+    std::cout << "[ASP] Managing " << state->num_enemies << " enemies.\n";
+
+    // Wait for battle
+    while (state->phase == PHASE_WAITING && !state->game_over) {
+        usleep(200000);
+    }
+
+    // Create enemy threads
+    pthread_t tids[MAX_ENEMIES];
+    int ids[MAX_ENEMIES];
+    for (int i = 0; i < state->num_enemies; i++) {
         ids[i] = i;
         pthread_create(&tids[i], NULL, enemy_thread, &ids[i]);
     }
-    for(int i = 0; i < state->num_enemies; i++) pthread_join(tids[i], NULL);
+
+    for (int i = 0; i < state->num_enemies; i++) {
+        pthread_join(tids[i], NULL);
+    }
+
+    std::cout << "[ASP] Game Over. Shutting down.\n";
     return 0;
 }
