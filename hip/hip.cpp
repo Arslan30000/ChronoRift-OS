@@ -33,39 +33,6 @@ void* player_thread(void* arg) {
             continue;
         }
 
-        // ---- Handle weapon drop first (via GUI) ----
-        sem_wait(&state->mutex);
-        bool drop_pending = state->weapon_drop.pending &&
-                            !state->weapon_drop.player_chose &&
-                            state->weapon_drop.killer_id == id;
-        sem_post(&state->mutex);
-
-        if (drop_pending) {
-            // Signal GUI to show weapon drop buttons
-            sem_wait(&state->mutex);
-            state->gui.phase = 5;
-            state->gui.waiting = true;
-            state->gui.for_player_id = id;
-            state->gui.input_ready = false;
-            sem_post(&state->mutex);
-
-            // Wait for GUI click
-            while (!state->game_over) {
-                sem_wait(&state->mutex);
-                bool ready = state->gui.input_ready;
-                sem_post(&state->mutex);
-                if (ready) break;
-                usleep(50000);
-            }
-
-            sem_wait(&state->mutex);
-            state->weapon_drop.player_chose = true;
-            state->weapon_drop.player_took = (state->gui.drop_choice == 1);
-            state->gui.waiting = false;
-            state->gui.input_ready = false;
-            sem_post(&state->mutex);
-        }
-
         // ---- Request action from GUI ----
         sem_wait(&state->mutex);
         state->gui.phase = 1; // action selection

@@ -17,6 +17,16 @@ void handle_alarm(int sig) {
     }
 }
 
+void handle_sigterm(int sig) {
+    (void)sig;
+    if (state) {
+        state->game_over = true;
+        state->winner = 2; // quit
+        state->phase = PHASE_GAME_OVER;
+        add_log(state, "=== PLAYER QUIT! Game ending... ===");
+    }
+}
+
 // ===================== DEADLOCK MONITOR THREAD =====================
 void* deadlock_monitor(void* arg) {
     GameState* gs = (GameState*)arg;
@@ -87,6 +97,9 @@ int main() {
     state->active_turn_type = -1;
     state->active_turn_id = -1;
     state->game_over = false;
+    state->total_kills = 0;
+    memset(&state->anim, 0, sizeof(AnimState));
+    state->arbiter_pid = getpid();
 
     // Initialize enemy count (random 2-9)
     state->num_enemies = rand() % 8 + 2;
@@ -120,8 +133,9 @@ int main() {
     state->artifacts[1].waiting_id = -1;
     state->artifacts[2].exists = false; // Eclipse Relic (spawns later)
 
-    // Setup signal handler for Ultimate Ability
+    // Setup signal handlers
     signal(SIGALRM, handle_alarm);
+    signal(SIGTERM, handle_sigterm);
 
     // Start threads
     pthread_t render_tid, deadlock_tid, stun_tid;
@@ -188,6 +202,13 @@ int main() {
                 }
             }
             state->weapon_drop.pending = false;
+        }
+
+        // Pause game while weapon drop dialog is showing
+        if (state->weapon_drop.pending && !state->weapon_drop.player_chose) {
+            sem_post(&state->mutex);
+            usleep(100000);
+            continue;
         }
 
         // If no active turn and no pending action and not ultimate

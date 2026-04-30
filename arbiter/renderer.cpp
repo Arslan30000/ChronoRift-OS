@@ -331,6 +331,9 @@ void* render_thread_func(void* arg) {
     // Weapon drop button rects
     sf::FloatRect dropYesRect, dropNoRect;
 
+    // Quit button rect
+    sf::FloatRect quitBtnRect;
+
     float time_acc = 0;
     sf::Clock clk;
 
@@ -375,14 +378,22 @@ void* render_thread_func(void* arg) {
                         }
                     }
                 }
-                // Phase 5: Weapon drop choice
-                else if (gs->gui.waiting && gs->gui.phase == 5 && !gs->gui.input_ready) {
+                // Weapon drop — handle directly (no need for HIP phase)
+                if (gs->weapon_drop.pending && !gs->weapon_drop.player_chose) {
                     if (dropYesRect.contains(mx, my)) {
-                        gs->gui.drop_choice = 1;
-                        gs->gui.input_ready = true;
+                        gs->weapon_drop.player_chose = true;
+                        gs->weapon_drop.player_took = true;
                     } else if (dropNoRect.contains(mx, my)) {
-                        gs->gui.drop_choice = 0;
-                        gs->gui.input_ready = true;
+                        gs->weapon_drop.player_chose = true;
+                        gs->weapon_drop.player_took = false;
+                    }
+                }
+
+                // Quit button click
+                if (quitBtnRect.contains(mx, my)) {
+                    // Send SIGTERM to arbiter for graceful quit
+                    if (gs->arbiter_pid > 0) {
+                        kill(gs->arbiter_pid, SIGTERM);
                     }
                 }
 
@@ -392,6 +403,9 @@ void* render_thread_func(void* arg) {
 
         float dt = clk.restart().asSeconds();
         time_acc += dt;
+
+        // Tick animation timer (outside mutex)
+        // We'll read it inside mutex below
 
         window.clear(BG_COLOR);
 
@@ -485,8 +499,24 @@ void* render_thread_func(void* arg) {
             snprintf(tickStr, sizeof(tickStr), "Tick: %d", gs->tick_count);
             sf::Text tickT(tickStr, font, 13);
             tickT.setFillColor(TEXT_DIM);
-            tickT.setPosition(200, 13);
+            tickT.setPosition(160, 13);
             window.draw(tickT);
+
+            // Kill counter
+            char killStr[64];
+            snprintf(killStr, sizeof(killStr), "Kills: %d/10", gs->total_kills);
+            sf::Text killT(killStr, font, 13);
+            killT.setFillColor(HP_GREEN);
+            killT.setPosition(260, 13);
+            window.draw(killT);
+
+            // Quit button (top-right)
+            drawRoundedRect(window, 1020, 5, 70, 30, sf::Color(120, 20, 20), HP_RED, 1);
+            sf::Text quitT("QUIT", font, 12);
+            quitT.setFillColor(TEXT_WHITE); quitT.setStyle(sf::Text::Bold);
+            quitT.setPosition(1035, 10);
+            window.draw(quitT);
+            quitBtnRect = sf::FloatRect(1020, 5, 70, 30);
 
             // Active turn indicator
             if (gs->active_turn_type >= 0) {
@@ -495,7 +525,7 @@ void* render_thread_func(void* arg) {
                 snprintf(turnBuf, sizeof(turnBuf), "Active: %s %s", gs->active_turn_type == 0 ? "[P]" : "[E]", ae->name);
                 sf::Text turnT(turnBuf, font, 13);
                 turnT.setFillColor(GOLD);
-                turnT.setPosition(350, 13);
+                turnT.setPosition(420, 13);
                 window.draw(turnT);
             }
 
@@ -524,6 +554,10 @@ void* render_thread_func(void* arg) {
 
             // Player cards — pass PNG sprites
             float cardW = 510, cardH = 82;
+            float cardGap = 8;
+            float cardsEndY = 72 + gs->num_players * (cardH + cardGap);
+            // Action buttons take ~85px when visible
+            float panelY = cardsEndY + 90; // space for action buttons
             for (int i = 0; i < gs->num_players; i++) {
                 bool active = (gs->active_turn_type == 0 && gs->active_turn_id == i);
                 sf::Sprite* spr = (i < MAX_PLAYERS && hasPlayer[i]) ? &playerSpr[i] : NULL;
@@ -600,7 +634,7 @@ void* render_thread_func(void* arg) {
             }
 
             // ============ INVENTORY PANEL ============
-            float invY = 490;
+            float invY = panelY;
             drawRoundedRect(window, 15, invY, 520, 60, PANEL_BG, sf::Color(60, 80, 120), 1);
             sf::Text invLabel("INVENTORY (P0)", font, 11);
             invLabel.setFillColor(CYAN_T);
@@ -643,7 +677,7 @@ void* render_thread_func(void* arg) {
             }
 
             // ============ ARTIFACT PANEL ============
-            float artY = 560;
+            float artY = invY + 65;
             drawRoundedRect(window, 15, artY, 520, 40, PANEL_BG, sf::Color(120, 100, 40), 1);
             sf::Text artLabel("ARTIFACTS", font, 11);
             artLabel.setFillColor(GOLD); artLabel.setPosition(20, artY + 3); window.draw(artLabel);
@@ -666,8 +700,10 @@ void* render_thread_func(void* arg) {
             }
 
             // ============ ACTION LOG ============
-            float logY = 610;
-            drawRoundedRect(window, 15, logY, 1070, 180, PANEL_BG, sf::Color(60, 70, 90), 1);
+            float logY = artY + 45;
+            float logH = 900 - logY - 10; // fill remaining space
+            if (logH < 80) logH = 80;
+            drawRoundedRect(window, 15, logY, 1070, logH, PANEL_BG, sf::Color(60, 70, 90), 1);
             sf::Text logLabel("ACTION LOG", font, 12);
             logLabel.setFillColor(CYAN_T); logLabel.setStyle(sf::Text::Bold);
             logLabel.setPosition(20, logY + 5);
@@ -689,8 +725,8 @@ void* render_thread_func(void* arg) {
                 overlay.setFillColor(sf::Color(0, 0, 0, 180));
                 window.draw(overlay);
 
-                const char* result = (gs->winner == 0) ? "VICTORY!" : "DEFEAT!";
-                sf::Color resCol = (gs->winner == 0) ? GOLD : HP_RED;
+                const char* result = (gs->winner == 0) ? "VICTORY!" : (gs->winner == 2) ? "QUIT" : "DEFEAT!";
+                sf::Color resCol = (gs->winner == 0) ? GOLD : (gs->winner == 2) ? CYAN_T : HP_RED;
                 sf::Text resT(result, font, 72);
                 resT.setStyle(sf::Text::Bold);
                 resT.setFillColor(resCol);
@@ -703,6 +739,109 @@ void* render_thread_func(void* arg) {
                 sf::FloatRect sb3 = subT.getLocalBounds();
                 subT.setPosition(550 - sb3.width / 2, 370);
                 window.draw(subT);
+            }
+
+            // ============ BATTLE ANIMATION OVERLAY ============
+            if (gs->anim.type > 0 && gs->anim.timer > 0) {
+                gs->anim.timer -= dt;
+                float alpha = (gs->anim.timer > 0) ? gs->anim.timer : 0;
+
+                if (gs->anim.type == 1 || gs->anim.type == 3) {
+                    // STRIKE / WEAPON — red flash + damage number
+                    sf::Uint8 a8 = (sf::Uint8)(120 * alpha);
+                    sf::RectangleShape flash(sf::Vector2f(1100, 900));
+                    flash.setFillColor(sf::Color(200, 30, 30, a8));
+                    window.draw(flash);
+                    char dmgBuf[64];
+                    snprintf(dmgBuf, sizeof(dmgBuf), "-%d", gs->anim.damage);
+                    sf::Text dmgT(dmgBuf, font, 48);
+                    dmgT.setFillColor(sf::Color(255, 80, 80, (sf::Uint8)(255 * alpha)));
+                    dmgT.setStyle(sf::Text::Bold);
+                    sf::FloatRect db = dmgT.getLocalBounds();
+                    dmgT.setPosition(550 - db.width/2, 400 - 50 * (1.0f - alpha));
+                    window.draw(dmgT);
+                } else if (gs->anim.type == 2) {
+                    // EXHAUST — blue pulse
+                    sf::Uint8 a8 = (sf::Uint8)(100 * alpha);
+                    sf::RectangleShape flash(sf::Vector2f(1100, 900));
+                    flash.setFillColor(sf::Color(30, 60, 200, a8));
+                    window.draw(flash);
+                    sf::Text exT("STAMINA DRAIN", font, 32);
+                    exT.setFillColor(sf::Color(100, 180, 255, (sf::Uint8)(200 * alpha)));
+                    exT.setStyle(sf::Text::Bold);
+                    sf::FloatRect eb = exT.getLocalBounds();
+                    exT.setPosition(550 - eb.width/2, 420);
+                    window.draw(exT);
+                } else if (gs->anim.type == 4) {
+                    // HEAL — green glow
+                    sf::Uint8 a8 = (sf::Uint8)(80 * alpha);
+                    sf::RectangleShape flash(sf::Vector2f(1100, 900));
+                    flash.setFillColor(sf::Color(30, 200, 60, a8));
+                    window.draw(flash);
+                    char healBuf[32]; snprintf(healBuf, sizeof(healBuf), "+%d HP", gs->anim.damage);
+                    sf::Text ht(healBuf, font, 40);
+                    ht.setFillColor(sf::Color(80, 255, 100, (sf::Uint8)(255 * alpha)));
+                    ht.setStyle(sf::Text::Bold);
+                    sf::FloatRect hb = ht.getLocalBounds();
+                    ht.setPosition(550 - hb.width/2, 400 - 40 * (1.0f - alpha));
+                    window.draw(ht);
+                } else if (gs->anim.type == 5) {
+                    // STUN — yellow flash + stars
+                    sf::Uint8 a8 = (sf::Uint8)(120 * alpha);
+                    sf::RectangleShape flash(sf::Vector2f(1100, 900));
+                    flash.setFillColor(sf::Color(250, 200, 20, a8));
+                    window.draw(flash);
+                    sf::Text stT("STUNNED!", font, 48);
+                    stT.setFillColor(sf::Color(255, 220, 40, (sf::Uint8)(255 * alpha)));
+                    stT.setStyle(sf::Text::Bold);
+                    sf::FloatRect sb = stT.getLocalBounds();
+                    stT.setPosition(550 - sb.width/2, 400);
+                    window.draw(stT);
+                    // Spinning stars
+                    for (int s = 0; s < 6; s++) {
+                        float angle = time_acc * 3 + s * 1.047f;
+                        float sx = 550 + cosf(angle) * 120;
+                        float sy = 420 + sinf(angle) * 40;
+                        sf::CircleShape star(6, 5);
+                        star.setPosition(sx, sy);
+                        star.setFillColor(sf::Color(255, 255, 80, (sf::Uint8)(200 * alpha)));
+                        window.draw(star);
+                    }
+                } else if (gs->anim.type == 6) {
+                    // ULTIMATE — gold explosion
+                    float pulse = sinf(time_acc * 8) * 0.3f + 0.7f;
+                    sf::Uint8 a8 = (sf::Uint8)(150 * alpha * pulse);
+                    sf::RectangleShape flash(sf::Vector2f(1100, 900));
+                    flash.setFillColor(sf::Color(255, 200, 0, a8));
+                    window.draw(flash);
+                    sf::Text ultT("ULTIMATE!", font, 64);
+                    ultT.setFillColor(sf::Color(255, 215, 0, (sf::Uint8)(255 * alpha)));
+                    ultT.setStyle(sf::Text::Bold);
+                    sf::FloatRect ub = ultT.getLocalBounds();
+                    ultT.setPosition(550 - ub.width/2, 380);
+                    window.draw(ultT);
+                    char udBuf[32]; snprintf(udBuf, sizeof(udBuf), "-%d to all enemies!", gs->anim.damage);
+                    sf::Text udT(udBuf, font, 24);
+                    udT.setFillColor(sf::Color(255, 240, 180, (sf::Uint8)(200 * alpha)));
+                    sf::FloatRect udb = udT.getLocalBounds();
+                    udT.setPosition(550 - udb.width/2, 455);
+                    window.draw(udT);
+                } else if (gs->anim.type == 7) {
+                    // DEATH — dark pulse
+                    sf::Uint8 a8 = (sf::Uint8)(100 * alpha);
+                    sf::RectangleShape flash(sf::Vector2f(1100, 900));
+                    flash.setFillColor(sf::Color(80, 0, 0, a8));
+                    window.draw(flash);
+                    char dBuf[64]; snprintf(dBuf, sizeof(dBuf), "%s DEFEATED!", gs->anim.target_name);
+                    sf::Text dT(dBuf, font, 36);
+                    dT.setFillColor(sf::Color(255, 60, 60, (sf::Uint8)(255 * alpha)));
+                    dT.setStyle(sf::Text::Bold);
+                    sf::FloatRect db = dT.getLocalBounds();
+                    dT.setPosition(550 - db.width/2, 400);
+                    window.draw(dT);
+                }
+
+                if (gs->anim.timer <= 0) gs->anim.type = 0;
             }
 
             // Weapon drop notification with clickable buttons

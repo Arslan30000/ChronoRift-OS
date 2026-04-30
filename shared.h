@@ -18,7 +18,7 @@
 #define MAX_ENEMIES 9
 #define INV_SLOTS 20
 #define LT_MAX 50
-#define NUM_WEAPONS 5
+#define NUM_WEAPONS 8
 #define LOG_SIZE 30
 
 // Roll number: 23i-0572
@@ -123,6 +123,17 @@ struct GuiInput {
     bool party_selected;
 };
 
+// Animation state for visual effects in renderer
+struct AnimState {
+    int type;           // 0=none, 1=strike, 2=exhaust, 3=weapon, 4=heal, 5=stun, 6=ultimate, 7=death
+    float timer;        // countdown in seconds
+    char actor_name[32];
+    char target_name[32];
+    int damage;
+    int actor_type;     // 0=player, 1=enemy
+    int target_type;
+};
+
 struct GameState {
     // Synchronization
     sem_t mutex;
@@ -169,19 +180,29 @@ struct GameState {
     // Game state
     bool game_over;
     int winner;          // 0=players won, 1=enemies won
+    int total_kills;     // win when >= 10
+
+    // Animation
+    AnimState anim;
 
     // Timing
     int tick_count;
     time_t npc_turn_start;
+
+    // Quit
+    pid_t arbiter_pid;   // for SIGTERM from HIP
 };
 
 // ==================== WEAPON TABLE ====================
 static const Weapon WEAPON_TABLE[NUM_WEAPONS] = {
-    {1, "Solar Core",   10, 95},
-    {2, "Lunar Blade",  10, 90},
-    {3, "Iron Halberd",  7, 55},
-    {4, "Venom Dagger",  4, 30},
-    {5, "Thunderstaff",  6, 50}
+    {1, "Solar Core",    10, 95},
+    {2, "Lunar Blade",   10, 90},
+    {3, "Iron Halberd",   7, 55},
+    {4, "Venom Dagger",   4, 30},
+    {5, "Thunderstaff",   6, 50},
+    {6, "Obsidian Axe",   5, 45},
+    {7, "Frostbow",       6, 48},
+    {8, "Splinter Stick", 2, 12}
 };
 
 // ==================== HELPERS ====================

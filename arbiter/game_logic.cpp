@@ -187,14 +187,23 @@ void process_action(GameState* gs, ActionMessage* msg) {
                 target->name, actor->damage);
             add_log(gs, buf);
 
+            // Trigger animation
+            gs->anim.type = 1;
+            gs->anim.timer = 1.0f;
+            gs->anim.damage = actor->damage;
+            gs->anim.actor_type = msg->sender_type;
+            gs->anim.target_type = (msg->sender_type == 0) ? 1 : 0;
+            strncpy(gs->anim.actor_name, actor->name, 31);
+            strncpy(gs->anim.target_name, target->name, 31);
+
             // Stun check: damage > 50 triggers stun
             if (actor->damage > 50 && target->is_alive && !target->is_stunned) {
                 target->is_stunned = true;
                 target->stun_start = time(NULL);
-                // Send SIGUSR1 to target process for async interrupt
                 if (target->process_id > 0) {
                     kill(target->process_id, SIGUSR1);
                 }
+                gs->anim.type = 5; // stun animation
                 snprintf(buf, sizeof(buf), "  >> %s is STUNNED for 3 seconds!", target->name);
                 add_log(gs, buf);
             }
@@ -210,6 +219,12 @@ void process_action(GameState* gs, ActionMessage* msg) {
                 msg->sender_type == 0 ? "P" : "E", actor->name,
                 target->name, actor->damage);
             add_log(gs, buf);
+            // Trigger animation
+            gs->anim.type = 2;
+            gs->anim.timer = 1.0f;
+            gs->anim.damage = actor->damage;
+            strncpy(gs->anim.actor_name, actor->name, 31);
+            strncpy(gs->anim.target_name, target->name, 31);
         }
         break;
 
@@ -224,6 +239,13 @@ void process_action(GameState* gs, ActionMessage* msg) {
                 w->name, target->name, w->damage);
             add_log(gs, buf);
 
+            // Trigger weapon animation
+            gs->anim.type = 3;
+            gs->anim.timer = 1.2f;
+            gs->anim.damage = w->damage;
+            strncpy(gs->anim.actor_name, actor->name, 31);
+            strncpy(gs->anim.target_name, target->name, 31);
+
             // Weapon-based stun
             if (w->damage > 50 && target->is_alive && !target->is_stunned) {
                 target->is_stunned = true;
@@ -231,6 +253,7 @@ void process_action(GameState* gs, ActionMessage* msg) {
                 if (target->process_id > 0) {
                     kill(target->process_id, SIGUSR1);
                 }
+                gs->anim.type = 5;
                 snprintf(buf, sizeof(buf), "  >> %s is STUNNED for 3 seconds!", target->name);
                 add_log(gs, buf);
             }
@@ -255,6 +278,10 @@ void process_action(GameState* gs, ActionMessage* msg) {
         snprintf(buf, sizeof(buf), "[%s] %s heals for %d HP!",
             msg->sender_type == 0 ? "P" : "E", actor->name, actor->max_hp / 10);
         add_log(gs, buf);
+        gs->anim.type = 4;
+        gs->anim.timer = 0.8f;
+        gs->anim.damage = actor->max_hp / 10;
+        strncpy(gs->anim.actor_name, actor->name, 31);
         break;
 
     case ACT_SKIP:
@@ -262,11 +289,10 @@ void process_action(GameState* gs, ActionMessage* msg) {
         snprintf(buf, sizeof(buf), "[%s] %s skips their turn.",
             msg->sender_type == 0 ? "P" : "E", actor->name);
         add_log(gs, buf);
+        gs->anim.type = 0;
         break;
 
     case ACT_ULTIMATE:
-        // Requires both Solar Core and Lunar Blade
-        // Deal massive damage to all enemies
         if (msg->sender_type == 0) {
             snprintf(buf, sizeof(buf), ">>> %s activates ULTIMATE ABILITY! <<<", actor->name);
             add_log(gs, buf);
@@ -278,6 +304,12 @@ void process_action(GameState* gs, ActionMessage* msg) {
                 }
             }
             actor->stamina = 0;
+
+            // Animation
+            gs->anim.type = 6;
+            gs->anim.timer = 2.0f;
+            gs->anim.damage = 185;
+            strncpy(gs->anim.actor_name, actor->name, 31);
 
             // Suspend ASP for 10 seconds
             gs->ultimate_active = true;
@@ -297,9 +329,17 @@ void process_action(GameState* gs, ActionMessage* msg) {
         target->hp = 0;
         snprintf(buf, sizeof(buf), "*** %s has been defeated! ***", target->name);
         add_log(gs, buf);
+        gs->anim.type = 7;
+        gs->anim.timer = 1.5f;
+        strncpy(gs->anim.target_name, target->name, 31);
 
-        // Weapon drop on enemy kill (50% chance, Section 6)
+        // Track total kills for win condition
         if (msg->sender_type == 0) {
+            gs->total_kills++;
+            snprintf(buf, sizeof(buf), "Total enemies defeated: %d/10", gs->total_kills);
+            add_log(gs, buf);
+
+            // Weapon drop on enemy kill (50% chance, Section 6)
             if (rand() % 2 == 0) {
                 int drop_id = (rand() % NUM_WEAPONS) + 1;
                 gs->weapon_drop.pending = true;
@@ -348,9 +388,17 @@ bool check_game_over(GameState* gs) {
         add_log(gs, "=== ALL PLAYERS DEFEATED! ENEMIES WIN! ===");
         return true;
     }
-    if (count_alive_enemies(gs) == 0) {
+    // Win condition: 10 total enemy kills (Section 10)
+    if (gs->total_kills >= 10) {
         gs->game_over = true;
         gs->winner = 0; // players win
+        add_log(gs, "=== 10 ENEMIES DEFEATED! PLAYERS WIN! ===");
+        return true;
+    }
+    // Also win if all current enemies dead (bonus condition)
+    if (count_alive_enemies(gs) == 0) {
+        gs->game_over = true;
+        gs->winner = 0;
         add_log(gs, "=== ALL ENEMIES DEFEATED! PLAYERS WIN! ===");
         return true;
     }
