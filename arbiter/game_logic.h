@@ -16,6 +16,7 @@ void process_action(GameState* gs, ActionMessage* msg);
 bool check_game_over(GameState* gs);
 int  count_alive_players(GameState* gs);
 int  count_alive_enemies(GameState* gs);
+void spawn_wave(GameState* gs);
 
 // Deadlock detection
 bool check_deadlock(GameState* gs);

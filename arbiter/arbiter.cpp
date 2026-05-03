@@ -103,6 +103,7 @@ int main() {
 
     // Initialize enemy count (random 2-9)
     state->num_enemies = rand() % 8 + 2;
+    state->total_spawned = state->num_enemies;
 
     // Initialize enemies with roll-number formulas
     for (int i = 0; i < state->num_enemies; i++) {
@@ -204,8 +205,35 @@ int main() {
             state->weapon_drop.pending = false;
         }
 
-        // Pause game while weapon drop dialog is showing
-        if (state->weapon_drop.pending && !state->weapon_drop.player_chose) {
+        // Handle relic drop timeout/choice
+        if (state->relic_drop.pending && state->relic_drop.player_chose) {
+            if (state->relic_drop.player_took) {
+                // Assign Eclipse Relic to player
+                state->artifacts[2].exists = true;
+                state->artifacts[2].locked = true;
+                state->artifacts[2].owner_type = 0;
+                state->artifacts[2].owner_id = state->relic_drop.killer_id;
+                snprintf(buf, sizeof(buf), ">> Player %d claimed the Eclipse Relic!", state->relic_drop.killer_id);
+                add_log(state, buf);
+            } else {
+                // Goes to global pool
+                spawn_eclipse_relic(state);
+                add_log(state, ">> Eclipse Relic declined, added to global pool.");
+            }
+            state->relic_drop.pending = false;
+        }
+
+        // Pause game while any drop dialog is showing
+        if ((state->weapon_drop.pending && !state->weapon_drop.player_chose) ||
+            (state->relic_drop.pending && !state->relic_drop.player_chose)) {
+            sem_post(&state->mutex);
+            usleep(100000);
+            continue;
+        }
+
+        // Handle wave transition timer
+        if (state->wave_transition_timer > 0) {
+            state->wave_transition_timer -= 0.1f;
             sem_post(&state->mutex);
             usleep(100000);
             continue;

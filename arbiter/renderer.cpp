@@ -103,7 +103,12 @@ static void drawEnemySprite(sf::RenderWindow& w, float cx, float cy, sf::Color c
 
 // ===================== ENTITY CARD =====================
 static void drawEntityCard(sf::RenderWindow& win, sf::Font& font, Entity* e, float x, float y, float w, float h,
-                           bool isPlayer, bool isActive, sf::Sprite* pngSprite = NULL) {
+                           bool isPlayer, bool isActive, sf::Sprite* pngSprite = NULL, sf::Sprite** wpSprs = NULL, int numWp = 0, int* unique_wps = NULL, int selected_wp = 0, float time_acc = 0) {
+    // Stun shaking effect
+    if (e->is_alive && e->is_stunned) {
+        x += sinf(time_acc * 30.0f) * 3.0f;
+    }
+
     sf::Color borderCol = isPlayer ? PLAYER_COLOR : ENEMY_COLOR;
     sf::Color bgCol = isPlayer ? PLAYER_DARK : ENEMY_DARK;
 
@@ -133,6 +138,17 @@ static void drawEntityCard(sf::RenderWindow& win, sf::Font& font, Entity* e, flo
     } else {
         if (isPlayer) drawPlayerSprite(win, spX, spY, borderCol, !e->is_alive, e->is_stunned);
         else drawEnemySprite(win, spX, spY, borderCol, !e->is_alive, e->is_stunned);
+    }
+
+
+
+    // Floating STUNNED text
+    if (e->is_alive && e->is_stunned) {
+        sf::Text stt("STUNNED!", font, 12);
+        stt.setFillColor(STUN_YELLOW);
+        stt.setStyle(sf::Text::Bold);
+        stt.setPosition(x + w/2 - 30, y - 5 + sinf(time_acc * 10.0f) * 4.0f);
+        win.draw(stt);
     }
 
     // Name
@@ -168,7 +184,7 @@ static void drawEntityCard(sf::RenderWindow& win, sf::Font& font, Entity* e, flo
     float hpPct = (e->max_hp > 0) ? (float)e->hp / e->max_hp : 0;
     sf::Text hpLabel("HP", font, 10); hpLabel.setFillColor(TEXT_DIM);
     hpLabel.setPosition(x + 75, y + 42); win.draw(hpLabel);
-    drawBar(win, x + 95, y + 44, w - 108, 12, hpPct, hpColor(hpPct));
+    drawBar(win, x + 95, y + 44, w - 190, 12, hpPct, hpColor(hpPct));
     char hpTxt[32]; snprintf(hpTxt, sizeof(hpTxt), "%d/%d", e->hp, e->max_hp);
     sf::Text hpV(hpTxt, font, 9); hpV.setFillColor(TEXT_WHITE);
     hpV.setPosition(x + 97, y + 43); win.draw(hpV);
@@ -179,18 +195,48 @@ static void drawEntityCard(sf::RenderWindow& win, sf::Font& font, Entity* e, flo
     stLabel.setPosition(x + 75, y + 60); win.draw(stLabel);
     bool full = (e->stamina >= e->max_stamina);
     sf::Color stCol = full ? STAM_CYAN : STAM_BLUE;
-    drawBar(win, x + 95, y + 62, w - 108, 12, stPct, stCol);
+    drawBar(win, x + 95, y + 62, w - 190, 12, stPct, stCol);
     char stTxt[32]; snprintf(stTxt, sizeof(stTxt), "%d/%d", e->stamina, e->max_stamina);
     sf::Text stV(stTxt, font, 9); stV.setFillColor(TEXT_WHITE);
     stV.setPosition(x + 97, y + 61); win.draw(stV);
+
+    // Equipment Box
+    if (wpSprs && numWp > 0 && unique_wps) {
+        float eqX = x + w - 85;
+        float eqY = y + 25;
+        drawRoundedRect(win, eqX, eqY, 75, 48, sf::Color(15, 20, 25, 180), sf::Color(50, 60, 70), 1);
+        
+        for (int i = 0; i < numWp; i++) {
+            sf::Sprite* ws = wpSprs[i];
+            if (ws) {
+                float wx = eqX + 5 + i * 15;
+                float wy = eqY + 12;
+                
+                // Highlight primary/selected weapon
+                if (unique_wps[i] == selected_wp) {
+                    drawRoundedRect(win, wx - 1, wy - 1, 26, 26, sf::Color(0,0,0,0), GOLD, 1);
+                }
+                
+                ws->setPosition(wx, wy);
+                sf::FloatRect bounds = ws->getLocalBounds();
+                if (bounds.width > 0 && bounds.height > 0) {
+                    ws->setScale(24.f / bounds.width, 24.f / bounds.height);
+                }
+                win.draw(*ws);
+            }
+        }
+    }
 }
 
 // ===================== MAIN RENDER THREAD =====================
 void* render_thread_func(void* arg) {
     GameState* gs = (GameState*)arg;
 
-    sf::RenderWindow window(sf::VideoMode(1100, 900), "Chrono Rift", sf::Style::Close);
-    window.setFramerateLimit(30);
+    sf::RenderWindow window(sf::VideoMode(1024, 768), "Chrono Rift", sf::Style::Default);
+    window.setFramerateLimit(60);
+    // Create a fixed view so resizing scales the contents
+    sf::View view(sf::FloatRect(0, 0, 1024, 768));
+    window.setView(view);
 
     sf::Font font;
     font.loadFromFile("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
@@ -202,7 +248,7 @@ void* render_thread_func(void* arg) {
     //   rectangles below. This is ideal for tilesets and sprite atlases.
     //   Files:  assets/characters.png   — all player + enemy sprites
     //           assets/items.png        — all weapon/item icons
-    //           assets/background.png   — full 1100x750 background
+    //           assets/background.png   — full 1024x720 background
     //           assets/title.png        — 600x200 title logo
     //
     // METHOD 2 (Individual PNGs): Place individual files as before:
@@ -312,11 +358,17 @@ void* render_thread_func(void* arg) {
             weaponSpr[i].setTextureRect(weaponRect[i]);
             hasWeapon[i] = true;
         } else {
-            char path[64]; snprintf(path, sizeof(path), "assets/weapon_%d.png", i + 1);
+            char path[128]; snprintf(path, sizeof(path), "assets/Weapon_Icons/%s", WEAPON_TABLE[i].icon_file);
             hasWeapon[i] = weaponTex[i].loadFromFile(path);
             if (hasWeapon[i]) weaponSpr[i].setTexture(weaponTex[i]);
         }
     }
+    
+    // Eclipse Relic Texture
+    sf::Texture relicTex;
+    bool hasRelic = relicTex.loadFromFile("assets/Weapon_Icons/spellbook.png");
+    sf::Sprite relicSpr;
+    if (hasRelic) relicSpr.setTexture(relicTex);
     // ===== END TEXTURE LOADING =====
 
     // Action button layout constants
@@ -327,9 +379,18 @@ void* render_thread_func(void* arg) {
 
     // Enemy card rects for click-to-target
     sf::FloatRect enemyCardRects[MAX_ENEMIES];
+    // Player card rects for targeting
+    sf::FloatRect playerCardRects[MAX_PLAYERS];
 
     // Weapon drop button rects
     sf::FloatRect dropYesRect, dropNoRect;
+    // Relic drop button rects
+    sf::FloatRect relicYesRect, relicNoRect;
+
+    // Active player's weapon click zones
+    sf::FloatRect activeWeaponRects[10];
+    int activeWeaponIds[10];
+    int numActiveWeapons = 0;
 
     // Quit button rect
     sf::FloatRect quitBtnRect;
@@ -349,12 +410,15 @@ void* render_thread_func(void* arg) {
             }
             // ===== MOUSE CLICK HANDLING =====
             if (ev.type == sf::Event::MouseButtonPressed && ev.mouseButton.button == sf::Mouse::Left) {
-                float mx = (float)ev.mouseButton.x;
-                float my = (float)ev.mouseButton.y;
+                sf::Vector2i pixelPos(ev.mouseButton.x, ev.mouseButton.y);
+                sf::Vector2f worldPos = window.mapPixelToCoords(pixelPos);
+                float mx = worldPos.x;
+                float my = worldPos.y;
                 sem_wait(&gs->mutex);
 
-                // Phase 1: Action selection — check action buttons
+                // Phase 1: Action selection — check action buttons & weapon clicks
                 if (gs->gui.waiting && gs->gui.phase == 1 && !gs->gui.input_ready) {
+                    // Check action buttons
                     for (int b = 0; b < NUM_BTNS; b++) {
                         if (btnRects[b].contains(mx, my)) {
                             gs->gui.selected_action = btnAction[b];
@@ -364,6 +428,13 @@ void* render_thread_func(void* arg) {
                             } else {
                                 gs->gui.input_ready = true;
                             }
+                            break;
+                        }
+                    }
+                    // Check weapon clicks
+                    for (int k = 0; k < numActiveWeapons; k++) {
+                        if (activeWeaponRects[k].contains(mx, my)) {
+                            gs->gui.selected_weapon = activeWeaponIds[k];
                             break;
                         }
                     }
@@ -378,7 +449,7 @@ void* render_thread_func(void* arg) {
                         }
                     }
                 }
-                // Weapon drop — handle directly (no need for HIP phase)
+                // Check weapon drop clicks
                 if (gs->weapon_drop.pending && !gs->weapon_drop.player_chose) {
                     if (dropYesRect.contains(mx, my)) {
                         gs->weapon_drop.player_chose = true;
@@ -386,6 +457,17 @@ void* render_thread_func(void* arg) {
                     } else if (dropNoRect.contains(mx, my)) {
                         gs->weapon_drop.player_chose = true;
                         gs->weapon_drop.player_took = false;
+                    }
+                }
+                
+                // Check relic drop clicks
+                if (gs->relic_drop.pending && !gs->relic_drop.player_chose) {
+                    if (relicYesRect.contains(mx, my)) {
+                        gs->relic_drop.player_chose = true;
+                        gs->relic_drop.player_took = true;
+                    } else if (relicNoRect.contains(mx, my)) {
+                        gs->relic_drop.player_chose = true;
+                        gs->relic_drop.player_took = false;
                     }
                 }
 
@@ -420,8 +502,8 @@ void* render_thread_func(void* arg) {
             // ============ TITLE / WAITING SCREEN ============
             // Animated background particles
             for (int i = 0; i < 40; i++) {
-                float px = fmod(i * 73.7f + time_acc * (10 + i % 5), 1100.0f);
-                float py = fmod(i * 47.3f + time_acc * (8 + i % 3), 900.0f);
+                float px = fmod(i * 73.7f + time_acc * (10 + i % 5), 1024.0f);
+                float py = fmod(i * 47.3f + time_acc * (8 + i % 3), 768.0f);
                 sf::CircleShape dot(1.5f + (i % 3));
                 dot.setPosition(px, py);
                 dot.setFillColor(sf::Color(100, 140, 220, 30 + (i * 7) % 50));
@@ -488,7 +570,7 @@ void* render_thread_func(void* arg) {
             // ============ BATTLE SCREEN ============
 
             // Top bar
-            drawRoundedRect(window, 0, 0, 1100, 42, sf::Color(15, 20, 35));
+            drawRoundedRect(window, 0, 0, 1024, 42, sf::Color(15, 20, 35));
             sf::Text titleBar("CHRONO RIFT", font, 16);
             titleBar.setStyle(sf::Text::Bold);
             titleBar.setFillColor(CYAN_T);
@@ -511,12 +593,12 @@ void* render_thread_func(void* arg) {
             window.draw(killT);
 
             // Quit button (top-right)
-            drawRoundedRect(window, 1020, 5, 70, 30, sf::Color(120, 20, 20), HP_RED, 1);
+            drawRoundedRect(window, 944, 5, 70, 30, sf::Color(120, 20, 20), HP_RED, 1);
             sf::Text quitT("QUIT", font, 12);
             quitT.setFillColor(TEXT_WHITE); quitT.setStyle(sf::Text::Bold);
-            quitT.setPosition(1035, 10);
+            quitT.setPosition(959, 10);
             window.draw(quitT);
-            quitBtnRect = sf::FloatRect(1020, 5, 70, 30);
+            quitBtnRect = sf::FloatRect(944, 5, 70, 30);
 
             // Active turn indicator
             if (gs->active_turn_type >= 0) {
@@ -532,11 +614,11 @@ void* render_thread_func(void* arg) {
             if (gs->ultimate_active) {
                 sf::Text ultT(">>> ULTIMATE ACTIVE <<<", font, 14);
                 ultT.setFillColor(GOLD);
-                ultT.setPosition(700, 12);
+                ultT.setPosition(650, 12);
                 ultT.setStyle(sf::Text::Bold);
                 window.draw(ultT);
                 // Overlay
-                sf::RectangleShape ultOverlay(sf::Vector2f(1100, 900));
+                sf::RectangleShape ultOverlay(sf::Vector2f(1024, 768));
                 ultOverlay.setFillColor(ULT_GOLD);
                 window.draw(ultOverlay);
             }
@@ -549,36 +631,114 @@ void* render_thread_func(void* arg) {
 
             sf::Text eLabel("ENEMIES", font, 14);
             eLabel.setFillColor(ENEMY_COLOR); eLabel.setStyle(sf::Text::Bold);
-            eLabel.setPosition(560, 50);
+            eLabel.setPosition(540, 50);
             window.draw(eLabel);
 
             // Player cards — pass PNG sprites
-            float cardW = 510, cardH = 82;
+            float cardW = 510, cardH = 82; // Slightly smaller to fit 1024
             float cardGap = 8;
             float cardsEndY = 72 + gs->num_players * (cardH + cardGap);
             // Action buttons take ~85px when visible
-            float panelY = cardsEndY + 90; // space for action buttons
+            float btnY0 = cardsEndY + 10;
+            if (btnY0 < 437) btnY0 = 437; // minimum Y coordinate
+            float panelY = btnY0 + 90; // space for action buttons
+            
             for (int i = 0; i < gs->num_players; i++) {
                 bool active = (gs->active_turn_type == 0 && gs->active_turn_id == i);
                 sf::Sprite* spr = (i < MAX_PLAYERS && hasPlayer[i]) ? &playerSpr[i] : NULL;
-                drawEntityCard(window, font, &gs->players[i], 15, 72 + i * (cardH + 8), cardW, cardH, true, active, spr);
+                sf::Sprite* wSprites[11];
+                int wCount = 0;
+                int unique_wp[10] = {0};
+                for (int s=0; s<INV_SLOTS; s++) { 
+                    int w = gs->players[i].inv.slots[s];
+                    if (w > 0) {
+                        bool dup = false;
+                        for(int k=0; k<wCount; k++) if(unique_wp[k] == w) dup = true;
+                        if (!dup && wCount < 10) unique_wp[wCount++] = w;
+                    }
+                }
+                for (int k=0; k<wCount; k++) {
+                    int w = unique_wp[k];
+                    if (w > 0 && hasWeapon[w - 1]) wSprites[k] = &weaponSpr[w - 1];
+                    else wSprites[k] = NULL;
+                }
+                // Eclipse Relic Check
+                if (gs->artifacts[2].exists && gs->artifacts[2].locked && gs->artifacts[2].owner_type == 0 && gs->artifacts[2].owner_id == i) {
+                    if (hasRelic) {
+                        wSprites[wCount] = &relicSpr;
+                        unique_wp[wCount] = -1; // -1 denotes Eclipse Relic
+                        wCount++;
+                    }
+                }
+                
+                float px = 15;
+                float py = 72 + i * (cardH + 8);
+                
+                int hl_wp = 0;
+                if (active) {
+                    if (gs->gui.selected_weapon == 0 && wCount > 0) gs->gui.selected_weapon = unique_wp[0];
+                    hl_wp = gs->gui.selected_weapon;
+                } else if (wCount > 0) {
+                    hl_wp = unique_wp[0];
+                }
+                
+                drawEntityCard(window, font, &gs->players[i], px, py, cardW, cardH, true, active, spr, wSprites, wCount, unique_wp, hl_wp, time_acc);
+                playerCardRects[i] = sf::FloatRect(px, py, cardW, cardH);
+                
+                if (active) {
+                    numActiveWeapons = wCount;
+                    float eqX = px + cardW - 85;
+                    float eqY = py + 25;
+                    for (int k = 0; k < wCount; k++) {
+                        activeWeaponRects[k] = sf::FloatRect(eqX + 5 + k * 15, eqY + 12, 24, 24);
+                        activeWeaponIds[k] = unique_wp[k];
+                    }
+                }
             }
 
             // Enemy cards — pass PNG sprites
             for (int i = 0; i < gs->num_enemies; i++) {
                 bool active = (gs->active_turn_type == 1 && gs->active_turn_id == i);
                 sf::Sprite* spr = (i < MAX_ENEMIES && hasEnemy[i]) ? &enemySpr[i] : NULL;
+                
+                sf::Sprite* wSprites[11];
+                int wCount = 0;
+                int unique_wp[10] = {0};
+                for (int s=0; s<INV_SLOTS; s++) { 
+                    int w = gs->enemies[i].inv.slots[s];
+                    if (w > 0) {
+                        bool dup = false;
+                        for(int k=0; k<wCount; k++) if(unique_wp[k] == w) dup = true;
+                        if (!dup && wCount < 10) unique_wp[wCount++] = w;
+                    }
+                }
+                for (int k=0; k<wCount; k++) {
+                    int w = unique_wp[k];
+                    if (w > 0 && hasWeapon[w - 1]) wSprites[k] = &weaponSpr[w - 1];
+                    else wSprites[k] = NULL;
+                }
+                // Eclipse Relic Check
+                if (gs->artifacts[2].exists && gs->artifacts[2].locked && gs->artifacts[2].owner_type == 1 && gs->artifacts[2].owner_id == i) {
+                    if (hasRelic) {
+                        wSprites[wCount] = &relicSpr;
+                        unique_wp[wCount] = -1;
+                        wCount++;
+                    }
+                }
+                
                 float ey = 72 + i * (cardH + 8);
+                int hl_wp = (wCount > 0) ? unique_wp[0] : 0;
+                
                 if (i >= 4) {
-                    drawEntityCard(window, font, &gs->enemies[i], 820, 72 + (i - 4) * (cardH + 8), 265, cardH, false, active, spr);
+                    drawEntityCard(window, font, &gs->enemies[i], 800, 72 + (i - 4) * (cardH + 8), 210, cardH, false, active, spr, wSprites, wCount, unique_wp, hl_wp, time_acc);
                 } else {
-                    drawEntityCard(window, font, &gs->enemies[i], 555, ey, cardW, cardH, false, active, spr);
+                    drawEntityCard(window, font, &gs->enemies[i], 540, ey, 245, cardH, false, active, spr, wSprites, wCount, unique_wp, hl_wp, time_acc);
                 }
             }
 
             // ============ ACTION BUTTONS (when player turn + GUI waiting) ============
             if (gs->gui.waiting && gs->active_turn_type == 0 && !gs->gui.input_ready) {
-                float btnX = 15, btnY0 = 72 + gs->num_players * 90 + 5;
+                float btnX = 15;
                 float btnW = 165, btnH = 32, gap = 6;
 
                 if (gs->gui.phase == 1) {
@@ -615,7 +775,7 @@ void* render_thread_func(void* arg) {
                     }
                 } else if (gs->gui.phase == 2) {
                     // Target selection prompt
-                    drawRoundedRect(window, btnX - 5, btnY0 - 5, 530, 30, sf::Color(80, 20, 20, 220), ENEMY_COLOR, 2);
+                    drawRoundedRect(window, btnX - 5, btnY0 - 5, 490, 30, sf::Color(80, 20, 20, 220), ENEMY_COLOR, 2);
                     sf::Text prompt("CLICK AN ENEMY TO TARGET:", font, 14);
                     prompt.setFillColor(sf::Color(255, 200, 200)); prompt.setStyle(sf::Text::Bold);
                     prompt.setPosition(btnX + 10, btnY0 + 2);
@@ -623,29 +783,35 @@ void* render_thread_func(void* arg) {
                 }
             }
 
-            // Store enemy card rects for click detection
             for (int i = 0; i < gs->num_enemies; i++) {
                 float ey = 72 + i * (cardH + 8);
                 if (i >= 4) {
-                    enemyCardRects[i] = sf::FloatRect(820, 72 + (i-4)*(cardH+8), 265, cardH);
+                    enemyCardRects[i] = sf::FloatRect(800, 72 + (i-4)*(cardH+8), 210, cardH);
                 } else {
-                    enemyCardRects[i] = sf::FloatRect(555, ey, cardW, cardH);
+                    enemyCardRects[i] = sf::FloatRect(540, ey, 245, cardH);
                 }
             }
 
             // ============ INVENTORY PANEL ============
             float invY = panelY;
-            drawRoundedRect(window, 15, invY, 520, 60, PANEL_BG, sf::Color(60, 80, 120), 1);
-            sf::Text invLabel("INVENTORY (P0)", font, 11);
+            drawRoundedRect(window, 15, invY, 490, 60, PANEL_BG, sf::Color(60, 80, 120), 1);
+            
+            int disp_pid = 0;
+            if (gs->active_turn_type == 0 && gs->active_turn_id >= 0 && gs->active_turn_id < gs->num_players) {
+                disp_pid = gs->active_turn_id;
+            }
+            
+            char invL[32]; snprintf(invL, sizeof(invL), "INVENTORY (P%d)", disp_pid);
+            sf::Text invLabel(invL, font, 11);
             invLabel.setFillColor(CYAN_T);
             invLabel.setPosition(20, invY + 3);
             window.draw(invLabel);
 
             if (gs->num_players > 0) {
                 for (int s = 0; s < INV_SLOTS; s++) {
-                    float sx = 20 + s * 25;
+                    float sx = 20 + s * 23;
                     float sy = invY + 20;
-                    int wid = gs->players[0].inv.slots[s];
+                    int wid = gs->players[disp_pid].inv.slots[s];
                     sf::Color slotCol = (wid == 0) ? sf::Color(30, 35, 45) :
                         (wid == 1) ? sf::Color(220, 180, 40) :
                         (wid == 2) ? sf::Color(100, 120, 220) :
@@ -678,13 +844,13 @@ void* render_thread_func(void* arg) {
 
             // ============ ARTIFACT PANEL ============
             float artY = invY + 65;
-            drawRoundedRect(window, 15, artY, 520, 40, PANEL_BG, sf::Color(120, 100, 40), 1);
+            drawRoundedRect(window, 15, artY, 490, 40, PANEL_BG, sf::Color(120, 100, 40), 1);
             sf::Text artLabel("ARTIFACTS", font, 11);
             artLabel.setFillColor(GOLD); artLabel.setPosition(20, artY + 3); window.draw(artLabel);
 
             const char* artNames[] = {"Solar Core", "Lunar Blade", "Eclipse Relic"};
             for (int a = 0; a < 3; a++) {
-                float ax = 20 + a * 175;
+                float ax = 20 + a * 160;
                 if (!gs->artifacts[a].exists) continue;
                 char abuf[64];
                 if (gs->artifacts[a].locked) {
@@ -701,9 +867,9 @@ void* render_thread_func(void* arg) {
 
             // ============ ACTION LOG ============
             float logY = artY + 45;
-            float logH = 900 - logY - 10; // fill remaining space
+            float logH = 768 - logY - 10; // fill remaining space
             if (logH < 80) logH = 80;
-            drawRoundedRect(window, 15, logY, 1070, logH, PANEL_BG, sf::Color(60, 70, 90), 1);
+            drawRoundedRect(window, 15, logY, 994, logH, PANEL_BG, sf::Color(60, 70, 90), 1);
             sf::Text logLabel("ACTION LOG", font, 12);
             logLabel.setFillColor(CYAN_T); logLabel.setStyle(sf::Text::Bold);
             logLabel.setPosition(20, logY + 5);
@@ -720,8 +886,8 @@ void* render_thread_func(void* arg) {
             }
 
             // ============ GAME OVER OVERLAY ============
-            if (gameOver) {
-                sf::RectangleShape overlay(sf::Vector2f(1100, 900));
+            if (gs->game_over) {
+                sf::RectangleShape overlay(sf::Vector2f(1024, 768));
                 overlay.setFillColor(sf::Color(0, 0, 0, 180));
                 window.draw(overlay);
 
@@ -731,13 +897,13 @@ void* render_thread_func(void* arg) {
                 resT.setStyle(sf::Text::Bold);
                 resT.setFillColor(resCol);
                 sf::FloatRect rb = resT.getLocalBounds();
-                resT.setPosition(550 - rb.width / 2, 280);
+                resT.setPosition(512 - rb.width / 2, 250);
                 window.draw(resT);
 
                 sf::Text subT("The battle has ended.", font, 20);
                 subT.setFillColor(TEXT_DIM);
                 sf::FloatRect sb3 = subT.getLocalBounds();
-                subT.setPosition(550 - sb3.width / 2, 370);
+                subT.setPosition(512 - sb3.width / 2, 340);
                 window.draw(subT);
             }
 
@@ -746,127 +912,203 @@ void* render_thread_func(void* arg) {
                 gs->anim.timer -= dt;
                 float alpha = (gs->anim.timer > 0) ? gs->anim.timer : 0;
 
+                // Find target rect
+                sf::FloatRect targetRect(0, 0, 1024, 768); // fallback full screen
+                bool hasTarget = false;
+                if (gs->anim.target_type == 0 && gs->anim.target_id >= 0 && gs->anim.target_id < MAX_PLAYERS) {
+                    targetRect = playerCardRects[gs->anim.target_id];
+                    hasTarget = true;
+                } else if (gs->anim.target_type == 1 && gs->anim.target_id >= 0 && gs->anim.target_id < MAX_ENEMIES) {
+                    targetRect = enemyCardRects[gs->anim.target_id];
+                    hasTarget = true;
+                }
+
+                float cx = hasTarget ? (targetRect.left + targetRect.width / 2) : 512;
+                float cy = hasTarget ? (targetRect.top + targetRect.height / 2) : 384;
+
+                // Draw a card-sized highlight (or full screen if no specific target / ultimate)
+                sf::RectangleShape flash(sf::Vector2f(hasTarget ? targetRect.width + 10 : 1024, hasTarget ? targetRect.height + 10 : 768));
+                if (hasTarget) {
+                    flash.setPosition(targetRect.left - 5, targetRect.top - 5);
+                } else {
+                    flash.setPosition(0, 0);
+                }
+
                 if (gs->anim.type == 1 || gs->anim.type == 3) {
                     // STRIKE / WEAPON — red flash + damage number
-                    sf::Uint8 a8 = (sf::Uint8)(120 * alpha);
-                    sf::RectangleShape flash(sf::Vector2f(1100, 900));
-                    flash.setFillColor(sf::Color(200, 30, 30, a8));
+                    sf::Uint8 a8 = (sf::Uint8)(180 * alpha);
+                    flash.setFillColor(sf::Color(255, 30, 30, a8));
                     window.draw(flash);
-                    char dmgBuf[64];
-                    snprintf(dmgBuf, sizeof(dmgBuf), "-%d", gs->anim.damage);
-                    sf::Text dmgT(dmgBuf, font, 48);
-                    dmgT.setFillColor(sf::Color(255, 80, 80, (sf::Uint8)(255 * alpha)));
+                    
+                    char dmgBuf[64]; snprintf(dmgBuf, sizeof(dmgBuf), "-%d", gs->anim.damage);
+                    sf::Text dmgT(dmgBuf, font, 40);
+                    dmgT.setFillColor(sf::Color(255, 60, 60, (sf::Uint8)(255 * alpha)));
                     dmgT.setStyle(sf::Text::Bold);
                     sf::FloatRect db = dmgT.getLocalBounds();
-                    dmgT.setPosition(550 - db.width/2, 400 - 50 * (1.0f - alpha));
+                    // Float upwards
+                    dmgT.setPosition(cx - db.width/2, cy - 20 - 40 * (1.0f - alpha));
                     window.draw(dmgT);
                 } else if (gs->anim.type == 2) {
                     // EXHAUST — blue pulse
-                    sf::Uint8 a8 = (sf::Uint8)(100 * alpha);
-                    sf::RectangleShape flash(sf::Vector2f(1100, 900));
-                    flash.setFillColor(sf::Color(30, 60, 200, a8));
+                    sf::Uint8 a8 = (sf::Uint8)(150 * alpha);
+                    flash.setFillColor(sf::Color(30, 60, 255, a8));
                     window.draw(flash);
-                    sf::Text exT("STAMINA DRAIN", font, 32);
-                    exT.setFillColor(sf::Color(100, 180, 255, (sf::Uint8)(200 * alpha)));
+                    
+                    sf::Text exT("STAMINA DRAIN", font, 24);
+                    exT.setFillColor(sf::Color(100, 180, 255, (sf::Uint8)(255 * alpha)));
                     exT.setStyle(sf::Text::Bold);
                     sf::FloatRect eb = exT.getLocalBounds();
-                    exT.setPosition(550 - eb.width/2, 420);
+                    exT.setPosition(cx - eb.width/2, cy - 10);
                     window.draw(exT);
                 } else if (gs->anim.type == 4) {
                     // HEAL — green glow
-                    sf::Uint8 a8 = (sf::Uint8)(80 * alpha);
-                    sf::RectangleShape flash(sf::Vector2f(1100, 900));
-                    flash.setFillColor(sf::Color(30, 200, 60, a8));
+                    sf::Uint8 a8 = (sf::Uint8)(150 * alpha);
+                    flash.setFillColor(sf::Color(30, 255, 60, a8));
                     window.draw(flash);
+                    
                     char healBuf[32]; snprintf(healBuf, sizeof(healBuf), "+%d HP", gs->anim.damage);
-                    sf::Text ht(healBuf, font, 40);
+                    sf::Text ht(healBuf, font, 36);
                     ht.setFillColor(sf::Color(80, 255, 100, (sf::Uint8)(255 * alpha)));
                     ht.setStyle(sf::Text::Bold);
                     sf::FloatRect hb = ht.getLocalBounds();
-                    ht.setPosition(550 - hb.width/2, 400 - 40 * (1.0f - alpha));
+                    ht.setPosition(cx - hb.width/2, cy - 20 - 40 * (1.0f - alpha));
                     window.draw(ht);
                 } else if (gs->anim.type == 5) {
                     // STUN — yellow flash + stars
-                    sf::Uint8 a8 = (sf::Uint8)(120 * alpha);
-                    sf::RectangleShape flash(sf::Vector2f(1100, 900));
-                    flash.setFillColor(sf::Color(250, 200, 20, a8));
+                    sf::Uint8 a8 = (sf::Uint8)(180 * alpha);
+                    flash.setFillColor(sf::Color(255, 220, 20, a8));
                     window.draw(flash);
-                    sf::Text stT("STUNNED!", font, 48);
-                    stT.setFillColor(sf::Color(255, 220, 40, (sf::Uint8)(255 * alpha)));
+                    
+                    sf::Text stT("STUNNED!", font, 32);
+                    stT.setFillColor(sf::Color(255, 255, 40, (sf::Uint8)(255 * alpha)));
                     stT.setStyle(sf::Text::Bold);
                     sf::FloatRect sb = stT.getLocalBounds();
-                    stT.setPosition(550 - sb.width/2, 400);
+                    stT.setPosition(cx - sb.width/2, cy - 15);
                     window.draw(stT);
+                    
                     // Spinning stars
-                    for (int s = 0; s < 6; s++) {
-                        float angle = time_acc * 3 + s * 1.047f;
-                        float sx = 550 + cosf(angle) * 120;
-                        float sy = 420 + sinf(angle) * 40;
-                        sf::CircleShape star(6, 5);
+                    for (int s = 0; s < 4; s++) {
+                        float angle = time_acc * 4 + s * 1.57f;
+                        float sx = cx + cosf(angle) * (targetRect.width/2 + 10);
+                        float sy = cy + sinf(angle) * (targetRect.height/2 + 10);
+                        sf::CircleShape star(5, 5);
                         star.setPosition(sx, sy);
                         star.setFillColor(sf::Color(255, 255, 80, (sf::Uint8)(200 * alpha)));
                         window.draw(star);
                     }
                 } else if (gs->anim.type == 6) {
-                    // ULTIMATE — gold explosion
-                    float pulse = sinf(time_acc * 8) * 0.3f + 0.7f;
-                    sf::Uint8 a8 = (sf::Uint8)(150 * alpha * pulse);
-                    sf::RectangleShape flash(sf::Vector2f(1100, 900));
-                    flash.setFillColor(sf::Color(255, 200, 0, a8));
-                    window.draw(flash);
+                    // ULTIMATE — gold explosion (always full screen)
+                    float pulse = sinf(time_acc * 10) * 0.3f + 0.7f;
+                    sf::Uint8 a8 = (sf::Uint8)(180 * alpha * pulse);
+                    sf::RectangleShape fsFlash(sf::Vector2f(1024, 768));
+                    fsFlash.setFillColor(sf::Color(255, 200, 0, a8));
+                    window.draw(fsFlash);
+                    
                     sf::Text ultT("ULTIMATE!", font, 64);
                     ultT.setFillColor(sf::Color(255, 215, 0, (sf::Uint8)(255 * alpha)));
                     ultT.setStyle(sf::Text::Bold);
                     sf::FloatRect ub = ultT.getLocalBounds();
-                    ultT.setPosition(550 - ub.width/2, 380);
+                    ultT.setPosition(512 - ub.width/2, 300);
                     window.draw(ultT);
+                    
                     char udBuf[32]; snprintf(udBuf, sizeof(udBuf), "-%d to all enemies!", gs->anim.damage);
                     sf::Text udT(udBuf, font, 24);
                     udT.setFillColor(sf::Color(255, 240, 180, (sf::Uint8)(200 * alpha)));
                     sf::FloatRect udb = udT.getLocalBounds();
-                    udT.setPosition(550 - udb.width/2, 455);
+                    udT.setPosition(512 - udb.width/2, 380);
                     window.draw(udT);
                 } else if (gs->anim.type == 7) {
                     // DEATH — dark pulse
-                    sf::Uint8 a8 = (sf::Uint8)(100 * alpha);
-                    sf::RectangleShape flash(sf::Vector2f(1100, 900));
+                    sf::Uint8 a8 = (sf::Uint8)(180 * alpha);
                     flash.setFillColor(sf::Color(80, 0, 0, a8));
                     window.draw(flash);
-                    char dBuf[64]; snprintf(dBuf, sizeof(dBuf), "%s DEFEATED!", gs->anim.target_name);
-                    sf::Text dT(dBuf, font, 36);
+                    
+                    char dBuf[64]; snprintf(dBuf, sizeof(dBuf), "DEFEATED!");
+                    sf::Text dT(dBuf, font, 32);
                     dT.setFillColor(sf::Color(255, 60, 60, (sf::Uint8)(255 * alpha)));
                     dT.setStyle(sf::Text::Bold);
                     sf::FloatRect db = dT.getLocalBounds();
-                    dT.setPosition(550 - db.width/2, 400);
+                    dT.setPosition(cx - db.width/2, cy - 10);
                     window.draw(dT);
                 }
 
                 if (gs->anim.timer <= 0) gs->anim.type = 0;
             }
 
+            // Wave Transition overlay
+            if (gs->wave_transition_timer > 0) {
+                sf::RectangleShape overlay(sf::Vector2f(1024, 768));
+                overlay.setFillColor(sf::Color(0, 0, 0, 200));
+                window.draw(overlay);
+
+                sf::Text st("SPAWNING NEXT WAVE...", font, 48);
+                st.setFillColor(CYAN_T);
+                st.setStyle(sf::Text::Bold);
+                sf::FloatRect sb = st.getLocalBounds();
+                st.setPosition(512 - sb.width/2, 280);
+                window.draw(st);
+            }
+
+            // Ultimate ASP Suspended Banner
+            if (gs->ultimate_active) {
+                float alpha = (sinf(time_acc * 8.0f) * 0.5f + 0.5f);
+                drawRoundedRect(window, 262, 50, 500, 40, sf::Color(150, 0, 0, 200), GOLD, 2);
+
+                sf::Text st("!!! ASP SUSPENDED - ENEMIES HALTED !!!", font, 18);
+                st.setFillColor(sf::Color(255, 200, 0, (sf::Uint8)(150 + 105 * alpha)));
+                st.setStyle(sf::Text::Bold);
+                sf::FloatRect sb = st.getLocalBounds();
+                st.setPosition(512 - sb.width/2, 58);
+                window.draw(st);
+            }
+
             // Weapon drop notification with clickable buttons
             if (gs->weapon_drop.pending && !gs->weapon_drop.player_chose) {
-                drawRoundedRect(window, 300, 300, 500, 100, sf::Color(30, 25, 10, 240), GOLD, 3);
+                drawRoundedRect(window, 280, 250, 400, 160, sf::Color(10, 15, 30, 240), GOLD, 2);
+                sf::Text dt("WEAPON DROPPED!", font, 24);
+                dt.setFillColor(GOLD); dt.setStyle(sf::Text::Bold);
+                dt.setPosition(360, 265); window.draw(dt);
+
                 const Weapon* dw = get_weapon_by_id(gs->weapon_drop.weapon_id);
                 if (dw) {
-                    char dbuf[128];
-                    snprintf(dbuf, sizeof(dbuf), "WEAPON DROP: %s (Dmg:%d, Slots:%d)",
-                        dw->name, dw->damage, dw->slot_size);
-                    sf::Text dt(dbuf, font, 16);
-                    dt.setFillColor(GOLD); dt.setStyle(sf::Text::Bold);
-                    dt.setPosition(320, 315);
-                    window.draw(dt);
+                    char b[64]; snprintf(b, sizeof(b), "%s (DMG: %d)", dw->name, dw->damage);
+                    sf::Text wt(b, font, 18); wt.setFillColor(TEXT_WHITE);
+                    wt.setPosition(360, 310); window.draw(wt);
                 }
+
                 // Yes button
-                drawRoundedRect(window, 370, 355, 120, 35, sf::Color(20, 100, 40), HP_GREEN, 2);
+                drawRoundedRect(window, 370, 355, 120, 35, sf::Color(20, 100, 20), HP_GREEN, 2);
                 sf::Text yesT("Pick Up", font, 14); yesT.setFillColor(TEXT_WHITE); yesT.setStyle(sf::Text::Bold);
                 yesT.setPosition(395, 362); window.draw(yesT);
                 dropYesRect = sf::FloatRect(370, 355, 120, 35);
                 // No button
                 drawRoundedRect(window, 510, 355, 120, 35, sf::Color(100, 20, 20), HP_RED, 2);
-                sf::Text noT("Decline", font, 14); noT.setFillColor(TEXT_WHITE); noT.setStyle(sf::Text::Bold);
-                noT.setPosition(535, 362); window.draw(noT);
+                sf::Text noT("Leave", font, 14); noT.setFillColor(TEXT_WHITE); noT.setStyle(sf::Text::Bold);
+                noT.setPosition(545, 362); window.draw(noT);
                 dropNoRect = sf::FloatRect(510, 355, 120, 35);
+            }
+
+            // Relic drop notification with clickable buttons
+            if (gs->relic_drop.pending && !gs->relic_drop.player_chose) {
+                drawRoundedRect(window, 280, 250, 400, 160, sf::Color(30, 10, 30, 240), sf::Color(150, 80, 255), 2);
+                sf::Text dt("ECLIPSE RELIC REVEALED!", font, 20);
+                dt.setFillColor(sf::Color(200, 120, 255)); dt.setStyle(sf::Text::Bold);
+                dt.setPosition(320, 265); window.draw(dt);
+
+                sf::Text wt("A legendary artifact appears...", font, 16);
+                wt.setFillColor(TEXT_WHITE);
+                wt.setPosition(340, 310); window.draw(wt);
+
+                // Yes button
+                drawRoundedRect(window, 370, 355, 120, 35, sf::Color(80, 20, 150), sf::Color(150, 80, 255), 2);
+                sf::Text yesT("Claim", font, 14); yesT.setFillColor(TEXT_WHITE); yesT.setStyle(sf::Text::Bold);
+                yesT.setPosition(405, 362); window.draw(yesT);
+                relicYesRect = sf::FloatRect(370, 355, 120, 35);
+                // No button
+                drawRoundedRect(window, 510, 355, 120, 35, sf::Color(100, 20, 20), HP_RED, 2);
+                sf::Text noT("Leave", font, 14); noT.setFillColor(TEXT_WHITE); noT.setStyle(sf::Text::Bold);
+                noT.setPosition(545, 362); window.draw(noT);
+                relicNoRect = sf::FloatRect(510, 355, 120, 35);
             }
         }
 

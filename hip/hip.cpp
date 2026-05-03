@@ -62,12 +62,21 @@ void* player_thread(void* arg) {
         state->gui.waiting = false;
         state->gui.input_ready = false;
 
-        // For "Use Weapon" (choice 3), auto-pick first inventory weapon
+        // For "Use Weapon" (choice 3), respect selected_weapon or auto-pick
         if (choice == 3) {
+            bool has_it = false;
             for (int s = 0; s < INV_SLOTS; s++) {
-                if (state->players[id].inv.slots[s] != 0) {
-                    weapon_id = state->players[id].inv.slots[s];
-                    break;
+                if (state->players[id].inv.slots[s] == weapon_id && weapon_id != 0) {
+                    has_it = true; break;
+                }
+            }
+            if (!has_it) {
+                weapon_id = 0;
+                for (int s = 0; s < INV_SLOTS; s++) {
+                    if (state->players[id].inv.slots[s] != 0) {
+                        weapon_id = state->players[id].inv.slots[s];
+                        break;
+                    }
                 }
             }
             if (weapon_id == 0) choice = 1; // fallback to Strike

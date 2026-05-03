@@ -47,10 +47,11 @@ enum GamePhase {
 
 // ==================== STRUCTS ====================
 struct Weapon {
-    int id;            // 1-5, 0 means empty
+    int id;
     char name[32];
     int slot_size;
     int damage;
+    char icon_file[32];
 };
 
 struct Inventory {
@@ -132,8 +133,9 @@ struct AnimState {
     int damage;
     int actor_type;     // 0=player, 1=enemy
     int target_type;
+    int target_id;      // NEW: Knows exactly which card to highlight
+    int actor_id;       // NEW: Knows exactly who is acting
 };
-
 struct GameState {
     // Synchronization
     sem_t mutex;
@@ -165,6 +167,7 @@ struct GameState {
 
     // Weapon drop
     WeaponDrop weapon_drop;
+    WeaponDrop relic_drop; // For Eclipse Relic prompt
 
     // GUI input channel
     GuiInput gui;
@@ -179,8 +182,10 @@ struct GameState {
 
     // Game state
     bool game_over;
-    int winner;          // 0=players won, 1=enemies won
+    int winner;          // 0=players won, 1=enemies won, 2=quit
     int total_kills;     // win when >= 10
+    int total_spawned;   // total enemies spawned so far (max 10)
+    float wave_transition_timer; // >0 means wave is spawning
 
     // Animation
     AnimState anim;
@@ -195,14 +200,14 @@ struct GameState {
 
 // ==================== WEAPON TABLE ====================
 static const Weapon WEAPON_TABLE[NUM_WEAPONS] = {
-    {1, "Solar Core",    10, 95},
-    {2, "Lunar Blade",   10, 90},
-    {3, "Iron Halberd",   7, 55},
-    {4, "Venom Dagger",   4, 30},
-    {5, "Thunderstaff",   6, 50},
-    {6, "Obsidian Axe",   5, 45},
-    {7, "Frostbow",       6, 48},
-    {8, "Splinter Stick", 2, 12}
+    {1, "Solar Core",    10, 95, "Staff10.png"},
+    {2, "Lunar Blade",   10, 90, "Sword14.png"},
+    {3, "Iron Halberd",   7, 55, "Axe4.png"},
+    {4, "Venom Dagger",   4, 30, "Dagger4.png"},
+    {5, "Thunderstaff",   6, 50, "Staff5.png"},
+    {6, "Obsidian Axe",   5, 45, "Axe1.png"},
+    {7, "Frostbow",       6, 48, "Bow1.png"},
+    {8, "Splinter Stick", 2, 12, "Staff1.png"}
 };
 
 // ==================== HELPERS ====================

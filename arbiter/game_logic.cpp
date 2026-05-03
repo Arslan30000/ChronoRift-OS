@@ -193,6 +193,8 @@ void process_action(GameState* gs, ActionMessage* msg) {
             gs->anim.damage = actor->damage;
             gs->anim.actor_type = msg->sender_type;
             gs->anim.target_type = (msg->sender_type == 0) ? 1 : 0;
+            gs->anim.actor_id = msg->sender_id;
+            gs->anim.target_id = msg->target_id;
             strncpy(gs->anim.actor_name, actor->name, 31);
             strncpy(gs->anim.target_name, target->name, 31);
 
@@ -223,6 +225,10 @@ void process_action(GameState* gs, ActionMessage* msg) {
             gs->anim.type = 2;
             gs->anim.timer = 1.0f;
             gs->anim.damage = actor->damage;
+            gs->anim.actor_type = msg->sender_type;
+            gs->anim.target_type = (msg->sender_type == 0) ? 1 : 0;
+            gs->anim.actor_id = msg->sender_id;
+            gs->anim.target_id = msg->target_id;
             strncpy(gs->anim.actor_name, actor->name, 31);
             strncpy(gs->anim.target_name, target->name, 31);
         }
@@ -243,6 +249,10 @@ void process_action(GameState* gs, ActionMessage* msg) {
             gs->anim.type = 3;
             gs->anim.timer = 1.2f;
             gs->anim.damage = w->damage;
+            gs->anim.actor_type = msg->sender_type;
+            gs->anim.target_type = (msg->sender_type == 0) ? 1 : 0;
+            gs->anim.actor_id = msg->sender_id;
+            gs->anim.target_id = msg->target_id;
             strncpy(gs->anim.actor_name, actor->name, 31);
             strncpy(gs->anim.target_name, target->name, 31);
 
@@ -281,6 +291,10 @@ void process_action(GameState* gs, ActionMessage* msg) {
         gs->anim.type = 4;
         gs->anim.timer = 0.8f;
         gs->anim.damage = actor->max_hp / 10;
+        gs->anim.actor_type = msg->sender_type;
+        gs->anim.actor_id = msg->sender_id;
+        gs->anim.target_type = msg->sender_type; // Self cast
+        gs->anim.target_id = msg->sender_id;
         strncpy(gs->anim.actor_name, actor->name, 31);
         break;
 
@@ -309,6 +323,8 @@ void process_action(GameState* gs, ActionMessage* msg) {
             gs->anim.type = 6;
             gs->anim.timer = 2.0f;
             gs->anim.damage = 185;
+            gs->anim.actor_type = msg->sender_type;
+            gs->anim.actor_id = msg->sender_id;
             strncpy(gs->anim.actor_name, actor->name, 31);
 
             // Suspend ASP for 10 seconds
@@ -331,6 +347,8 @@ void process_action(GameState* gs, ActionMessage* msg) {
         add_log(gs, buf);
         gs->anim.type = 7;
         gs->anim.timer = 1.5f;
+        gs->anim.target_type = (msg->sender_type == 0) ? 1 : 0;
+        gs->anim.target_id = msg->target_id;
         strncpy(gs->anim.target_name, target->name, 31);
 
         // Track total kills for win condition
@@ -342,26 +360,39 @@ void process_action(GameState* gs, ActionMessage* msg) {
             // Weapon drop on enemy kill (50% chance, Section 6)
             if (rand() % 2 == 0) {
                 int drop_id = (rand() % NUM_WEAPONS) + 1;
-                gs->weapon_drop.pending = true;
-                gs->weapon_drop.weapon_id = drop_id;
-                gs->weapon_drop.killer_id = msg->sender_id;
-                gs->weapon_drop.player_chose = false;
-                gs->weapon_drop.player_took = false;
-                const Weapon* dw = get_weapon_by_id(drop_id);
-                if (dw) {
-                    snprintf(buf, sizeof(buf), ">> %s dropped! Pick it up? (Player %d decides)",
-                        dw->name, msg->sender_id);
-                    add_log(gs, buf);
+                
+                bool already_has = false;
+                for (int s = 0; s < INV_SLOTS; s++) {
+                    if (actor->inv.slots[s] == drop_id) { already_has = true; break; }
+                }
+                
+                if (!already_has) {
+                    gs->weapon_drop.pending = true;
+                    gs->weapon_drop.weapon_id = drop_id;
+                    gs->weapon_drop.killer_id = msg->sender_id;
+                    gs->weapon_drop.player_chose = false;
+                    gs->weapon_drop.player_took = false;
+                    const Weapon* dw = get_weapon_by_id(drop_id);
+                    if (dw) {
+                        snprintf(buf, sizeof(buf), ">> %s dropped! Pick it up? (Player %d decides)",
+                            dw->name, msg->sender_id);
+                        add_log(gs, buf);
+                    }
                 }
             }
 
-            // Spawn Eclipse Relic after first enemy kill
-            if (!gs->artifacts[2].exists) {
-                spawn_eclipse_relic(gs);
+            // Spawn Eclipse Relic prompt after first enemy kill
+            if (!gs->artifacts[2].exists && !gs->relic_drop.pending && !gs->weapon_drop.pending) {
+                gs->relic_drop.pending = true;
+                gs->relic_drop.killer_id = msg->sender_id;
+                gs->relic_drop.player_chose = false;
+                gs->relic_drop.player_took = false;
+                add_log(gs, ">> Eclipse Relic revealed! Claim it? (Player decides)");
             }
         }
     }
 }
+
 
 // ================================================================
 // GAME STATE CHECKS
@@ -395,14 +426,55 @@ bool check_game_over(GameState* gs) {
         add_log(gs, "=== 10 ENEMIES DEFEATED! PLAYERS WIN! ===");
         return true;
     }
-    // Also win if all current enemies dead (bonus condition)
-    if (count_alive_enemies(gs) == 0) {
+    // Check for wave transition
+    if (count_alive_enemies(gs) == 0 && gs->total_spawned < 10) {
+        gs->wave_transition_timer = 3.0f; // 3 seconds transition
+        add_log(gs, ">>> SPAWNING NEXT WAVE... <<<");
+        spawn_wave(gs);
+        return false;
+    }
+
+    // Also win if all current enemies dead and all 10 have spawned
+    if (count_alive_enemies(gs) == 0 && gs->total_spawned >= 10) {
         gs->game_over = true;
         gs->winner = 0;
         add_log(gs, "=== ALL ENEMIES DEFEATED! PLAYERS WIN! ===");
         return true;
     }
     return false;
+}
+
+void spawn_wave(GameState* gs) {
+    int to_spawn = 10 - gs->total_spawned;
+    if (to_spawn <= 0) return;
+    
+    // We can spawn up to MAX_ENEMIES at once, but we'll just fill empty slots
+    int empty_slots = 0;
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (!gs->enemies[i].is_alive) empty_slots++;
+    }
+    
+    int spawn_count = (to_spawn < empty_slots) ? to_spawn : empty_slots;
+    if (spawn_count == 0) return;
+    
+    int spawned = 0;
+    for (int i = 0; i < MAX_ENEMIES && spawned < spawn_count; i++) {
+        if (!gs->enemies[i].is_alive) {
+            gs->enemies[i].is_alive = true;
+            gs->enemies[i].hp = gs->enemies[i].max_hp;
+            gs->enemies[i].stamina = 0;
+            gs->enemies[i].is_stunned = false;
+            gs->enemies[i].stun_start = 0;
+            memset(&gs->enemies[i].inv, 0, sizeof(Inventory));
+            spawned++;
+            gs->total_spawned++;
+            // Note: enemy thread must be actively checking is_alive.
+            // Since ASP threads loop checking is_alive, they will automatically wake up and start acting.
+        }
+    }
+    char buf[64];
+    snprintf(buf, sizeof(buf), ">> Wave 2: %d enemies spawned!", spawned);
+    add_log(gs, buf);
 }
 
 // ================================================================
