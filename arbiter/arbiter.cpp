@@ -77,7 +77,7 @@ void* stun_timer_thread(void* arg) {
 
 // ===================== MAIN =====================
 int main() {
-    srand(ROLL_SEED);
+    srand(time(NULL) ^ getpid());
 
     // Clean up any stale shared memory
     shm_unlink(SHM_NAME);
@@ -166,6 +166,39 @@ int main() {
     add_log(state, "=== BATTLE BEGINS! ===");
     snprintf(buf, sizeof(buf), "Players: %d vs Enemies: %d", state->num_players, state->num_enemies);
     add_log(state, buf);
+
+    // // ==========================================================
+    // // TESTING OVERRIDE 1: Instantly give Player 0 both Artifacts
+    // // ==========================================================
+    // allocate_weapon(&state->players[0], get_weapon_by_id(1)); // 1 = Solar Core
+    // state->artifacts[0].locked = true;
+    // state->artifacts[0].owner_type = 0;
+    // state->artifacts[0].owner_id = 0;
+
+    // allocate_weapon(&state->players[0], get_weapon_by_id(2)); // 2 = Lunar Blade
+    // state->artifacts[1].locked = true;
+    // state->artifacts[1].owner_type = 0;
+    // state->artifacts[1].owner_id = 0;
+    // ==========================================================
+
+    // // ==========================================================
+    // // TESTING OVERRIDE 2: Fill Inventory & Populate Long-Term
+    // // ==========================================================
+    // // 1. Completely fill Player 0's primary inventory with Splinter Sticks (ID 8, takes 2 slots each)
+    // // 10 sticks * 2 slots = 20 slots perfectly filled.
+    // for (int i = 0; i < INV_SLOTS; i++) {
+    //     state->players[0].inv.slots[i] = 8; 
+    // }
+
+    // // 2. Put a Thunderstaff (ID 5, takes 6 slots) into Long-Term Storage
+    // state->players[0].inv.long_term[0] = 5; 
+    
+    // // 3. Put an Iron Halberd (ID 3, takes 7 slots) into Long-Term Storage
+    // state->players[0].inv.long_term[1] = 3; 
+
+    // // Update the long term storage count
+    // state->players[0].inv.lt_count = 2;
+    // // ==========================================================
     sem_post(&state->mutex);
 
     // ===================== MAIN GAME LOOP =====================
@@ -239,8 +272,8 @@ int main() {
             continue;
         }
 
-        // If no active turn and no pending action and not ultimate
-        if (state->active_turn_type < 0 && !state->pending_action.is_ready && !state->ultimate_active) {
+        // If no active turn and no pending action
+        if (state->active_turn_type < 0 && !state->pending_action.is_ready) {
             // Check if anyone is ready
             bool someone_ready = false;
             int ready_type = -1, ready_id = -1;

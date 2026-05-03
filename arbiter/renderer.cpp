@@ -398,6 +398,8 @@ void* render_thread_func(void* arg) {
     float time_acc = 0;
     sf::Clock clk;
 
+    int logScrollOffset = 0;
+
     while (window.isOpen()) {
         sf::Event ev;
         while (window.pollEvent(ev)) {
@@ -408,6 +410,14 @@ void* render_thread_func(void* arg) {
                 sem_post(&gs->mutex);
                 return NULL;
             }
+            // ===== MOUSE SCROLL HANDLING =====
+            if (ev.type == sf::Event::MouseWheelScrolled) {
+                if (ev.mouseWheelScroll.wheel == sf::Mouse::VerticalWheel) {
+                    logScrollOffset += (int)ev.mouseWheelScroll.delta; // Scroll up -> view older -> increase offset
+                    if (logScrollOffset < 0) logScrollOffset = 0;
+                }
+            }
+            
             // ===== MOUSE CLICK HANDLING =====
             if (ev.type == sf::Event::MouseButtonPressed && ev.mouseButton.button == sf::Mouse::Left) {
                 sf::Vector2i pixelPos(ev.mouseButton.x, ev.mouseButton.y);
@@ -641,7 +651,7 @@ void* render_thread_func(void* arg) {
             // Action buttons take ~85px when visible
             float btnY0 = cardsEndY + 10;
             if (btnY0 < 437) btnY0 = 437; // minimum Y coordinate
-            float panelY = btnY0 + 90; // space for action buttons
+            float panelY = btnY0 + 130; // space for action buttons
             
             for (int i = 0; i < gs->num_players; i++) {
                 bool active = (gs->active_turn_type == 0 && gs->active_turn_id == i);
@@ -686,12 +696,14 @@ void* render_thread_func(void* arg) {
                 playerCardRects[i] = sf::FloatRect(px, py, cardW, cardH);
                 
                 if (active) {
-                    numActiveWeapons = wCount;
+                    numActiveWeapons = 0;
                     float eqX = px + cardW - 85;
                     float eqY = py + 25;
                     for (int k = 0; k < wCount; k++) {
-                        activeWeaponRects[k] = sf::FloatRect(eqX + 5 + k * 15, eqY + 12, 24, 24);
-                        activeWeaponIds[k] = unique_wp[k];
+                        if (unique_wp[k] == -1) continue;
+                        activeWeaponRects[numActiveWeapons] = sf::FloatRect(eqX + 5 + k * 15, eqY + 12, 24, 24);
+                        activeWeaponIds[numActiveWeapons] = unique_wp[k];
+                        numActiveWeapons++;
                     }
                 }
             }
@@ -743,7 +755,7 @@ void* render_thread_func(void* arg) {
 
                 if (gs->gui.phase == 1) {
                     // Draw action buttons
-                    drawRoundedRect(window, btnX - 5, btnY0 - 5, 530, 80, sf::Color(15, 25, 45, 220), CYAN_T, 1);
+                    drawRoundedRect(window, btnX - 5, btnY0 - 5, 530, 120, sf::Color(15, 25, 45, 220), CYAN_T, 1);
                     sf::Text prompt("SELECT ACTION:", font, 12);
                     prompt.setFillColor(GOLD); prompt.setStyle(sf::Text::Bold);
                     prompt.setPosition(btnX, btnY0 - 2);
@@ -753,25 +765,41 @@ void* render_thread_func(void* arg) {
                     for (int b = 0; b < NUM_BTNS; b++) {
                         float bx = btnX + (b % 3) * (btnW + gap);
                         float by = btnY0 + (b / 3) * (btnH + gap);
-                        // Skip ultimate if player doesn't have both artifacts
+                        
+                        bool clickable = true;
+                        sf::Color btnCol(30, 70, 130);
+                        sf::Color btnOut(60, 130, 220);
+                        
+                        // Ultimate ability logic
                         if (b == 6) {
                             bool hasSol = false, hasLun = false;
-                            int pid = gs->gui.for_player_id;
+                            int pid = gs->active_turn_id; // Absolute truth of whose turn it is
                             for (int s = 0; s < INV_SLOTS; s++) {
                                 if (gs->players[pid].inv.slots[s] == 1) hasSol = true;
                                 if (gs->players[pid].inv.slots[s] == 2) hasLun = true;
                             }
-                            if (!hasSol || !hasLun) continue;
+                            if (!hasSol || !hasLun) {
+                                clickable = false;
+                                btnCol = sf::Color(30, 30, 30);
+                                btnOut = sf::Color(80, 80, 80);
+                            } else {
+                                btnCol = sf::Color(100, 70, 20);
+                                btnOut = GOLD;
+                            }
                         }
-                        sf::Color btnCol(30, 70, 130);
-                        sf::Color btnOut(60, 130, 220);
-                        if (b == 6) { btnCol = sf::Color(100, 70, 20); btnOut = GOLD; }
+                        
                         drawRoundedRect(window, bx, by, btnW, btnH, btnCol, btnOut, 2);
                         sf::Text bt(btnLabels[b], font, 13);
-                        bt.setFillColor(TEXT_WHITE); bt.setStyle(sf::Text::Bold);
+                        bt.setFillColor(clickable ? TEXT_WHITE : sf::Color(120, 120, 120));
+                        bt.setStyle(sf::Text::Bold);
                         bt.setPosition(bx + 10, by + 7);
                         window.draw(bt);
-                        btnRects[b] = sf::FloatRect(bx, by, btnW, btnH);
+                        
+                        if (clickable) {
+                            btnRects[b] = sf::FloatRect(bx, by, btnW, btnH);
+                        } else {
+                            btnRects[b] = sf::FloatRect(0, 0, 0, 0);
+                        }
                     }
                 } else if (gs->gui.phase == 2) {
                     // Target selection prompt
@@ -875,8 +903,21 @@ void* render_thread_func(void* arg) {
             logLabel.setPosition(20, logY + 5);
             window.draw(logLabel);
 
-            int logStart = gs->log_count > 11 ? gs->log_count - 11 : 0;
-            for (int l = logStart; l < gs->log_count; l++) {
+            int maxLines = 11;
+            int totalLines = gs->log_count;
+            int currentMaxOffset = (totalLines > maxLines) ? (totalLines - maxLines) : 0;
+            
+            // Constrain offset
+            if (logScrollOffset > currentMaxOffset) logScrollOffset = currentMaxOffset;
+            if (logScrollOffset < 0) logScrollOffset = 0;
+            
+            // logScrollOffset = 0 means at the bottom (newest)
+            // logScrollOffset = currentMaxOffset means at the top (oldest)
+            int logStart = currentMaxOffset - logScrollOffset;
+            int logEnd = logStart + maxLines;
+            if (logEnd > totalLines) logEnd = totalLines;
+            
+            for (int l = logStart; l < logEnd; l++) {
                 int idx = l % LOG_SIZE;
                 sf::Text lt(gs->log_entries[idx].message, font, 11);
                 bool isImportant = (gs->log_entries[idx].message[0] == '*' || gs->log_entries[idx].message[0] == '>');

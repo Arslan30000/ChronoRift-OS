@@ -132,7 +132,7 @@ void* player_thread(void* arg) {
 
 // ===================== MAIN =====================
 int main() {
-    srand(ROLL_SEED);
+    srand(time(NULL) ^ getpid());
 
     int shm_fd = shm_open(SHM_NAME, O_RDWR, 0666);
     if (shm_fd < 0) {

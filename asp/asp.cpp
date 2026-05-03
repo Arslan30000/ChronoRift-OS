@@ -92,7 +92,7 @@ void* enemy_thread(void* arg) {
 
 // ===================== MAIN =====================
 int main() {
-    srand(ROLL_SEED + 1); // Slightly different seed for enemy randomness
+    srand(time(NULL) ^ getpid()); // Random seed
 
     int shm_fd = shm_open(SHM_NAME, O_RDWR, 0666);
     if (shm_fd < 0) {
@@ -107,7 +107,7 @@ int main() {
     sem_wait(&state->mutex);
     state->asp_pid = getpid();
     // Set enemy process IDs
-    for (int i = 0; i < state->num_enemies; i++) {
+    for (int i = 0; i < MAX_ENEMIES; i++) {
         state->enemies[i].process_id = getpid();
     }
     state->asp_connected = true;
@@ -121,15 +121,15 @@ int main() {
         usleep(200000);
     }
 
-    // Create enemy threads
+    // Create enemy threads for all possible enemies
     pthread_t tids[MAX_ENEMIES];
     int ids[MAX_ENEMIES];
-    for (int i = 0; i < state->num_enemies; i++) {
+    for (int i = 0; i < MAX_ENEMIES; i++) {
         ids[i] = i;
         pthread_create(&tids[i], NULL, enemy_thread, &ids[i]);
     }
 
-    for (int i = 0; i < state->num_enemies; i++) {
+    for (int i = 0; i < MAX_ENEMIES; i++) {
         pthread_join(tids[i], NULL);
     }
 

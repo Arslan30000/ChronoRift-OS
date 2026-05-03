@@ -177,20 +177,36 @@ void process_action(GameState* gs, ActionMessage* msg) {
     char buf[128];
 
     switch (msg->type) {
-    case ACT_STRIKE:
-        if (target) {
-            target->hp -= actor->damage;
+    case ACT_STRIKE: {
+        if (target && target->hp > 0 && target->is_alive) {
+            int dmg = actor->damage;
+            int heal = 0;
+            if (gs->artifacts[2].exists && gs->artifacts[2].locked &&
+                gs->artifacts[2].owner_type == msg->sender_type &&
+                gs->artifacts[2].owner_id == msg->sender_id) {
+                dmg += 10;
+                heal = 10;
+            }
+
+            target->hp -= dmg;
             if (target->hp < 0) target->hp = 0;
+            if (heal > 0) {
+                actor->hp += heal;
+                if (actor->hp > actor->max_hp) actor->hp = actor->max_hp;
+            }
             actor->stamina = 0;
             snprintf(buf, sizeof(buf), "[%s] %s strikes %s for %d damage!",
-                msg->sender_type == 0 ? "P" : "E", actor->name,
-                target->name, actor->damage);
+                msg->sender_type == 0 ? "P" : "E", actor->name, target->name, dmg);
             add_log(gs, buf);
+            if (heal > 0) {
+                snprintf(buf, sizeof(buf), "  >> Eclipse Relic heals %s for %d HP!", actor->name, heal);
+                add_log(gs, buf);
+            }
 
-            // Trigger animation
+            // Trigger strike animation
             gs->anim.type = 1;
             gs->anim.timer = 1.0f;
-            gs->anim.damage = actor->damage;
+            gs->anim.damage = dmg;
             gs->anim.actor_type = msg->sender_type;
             gs->anim.target_type = (msg->sender_type == 0) ? 1 : 0;
             gs->anim.actor_id = msg->sender_id;
@@ -210,8 +226,8 @@ void process_action(GameState* gs, ActionMessage* msg) {
                 add_log(gs, buf);
             }
         }
+        }
         break;
-
     case ACT_EXHAUST:
         if (target) {
             target->stamina -= actor->damage;
@@ -237,18 +253,35 @@ void process_action(GameState* gs, ActionMessage* msg) {
     case ACT_USE_WEAPON: {
         const Weapon* w = get_weapon_by_id(msg->weapon_id);
         if (target && w) {
-            target->hp -= w->damage;
+            int dmg = w->damage;
+            int heal = 0;
+            if (gs->artifacts[2].exists && gs->artifacts[2].locked &&
+                gs->artifacts[2].owner_type == msg->sender_type &&
+                gs->artifacts[2].owner_id == msg->sender_id) {
+                dmg += 10;
+                heal = 10;
+            }
+
+            target->hp -= dmg;
             if (target->hp < 0) target->hp = 0;
+            if (heal > 0) {
+                actor->hp += heal;
+                if (actor->hp > actor->max_hp) actor->hp = actor->max_hp;
+            }
             actor->stamina = 0;
             snprintf(buf, sizeof(buf), "[%s] %s uses %s on %s for %d damage!",
                 msg->sender_type == 0 ? "P" : "E", actor->name,
-                w->name, target->name, w->damage);
+                w->name, target->name, dmg);
             add_log(gs, buf);
+            if (heal > 0) {
+                snprintf(buf, sizeof(buf), "  >> Eclipse Relic heals %s for %d HP!", actor->name, heal);
+                add_log(gs, buf);
+            }
 
             // Trigger weapon animation
             gs->anim.type = 3;
             gs->anim.timer = 1.2f;
-            gs->anim.damage = w->damage;
+            gs->anim.damage = dmg;
             gs->anim.actor_type = msg->sender_type;
             gs->anim.target_type = (msg->sender_type == 0) ? 1 : 0;
             gs->anim.actor_id = msg->sender_id;
@@ -257,7 +290,7 @@ void process_action(GameState* gs, ActionMessage* msg) {
             strncpy(gs->anim.target_name, target->name, 31);
 
             // Weapon-based stun
-            if (w->damage > 50 && target->is_alive && !target->is_stunned) {
+            if (dmg > 50 && target->is_alive && !target->is_stunned) {
                 target->is_stunned = true;
                 target->stun_start = time(NULL);
                 if (target->process_id > 0) {
@@ -313,7 +346,7 @@ void process_action(GameState* gs, ActionMessage* msg) {
 
             for (int i = 0; i < gs->num_enemies; i++) {
                 if (gs->enemies[i].is_alive) {
-                    gs->enemies[i].hp -= 185; // Solar(95) + Lunar(90)
+                    gs->enemies[i].hp -= 30;
                     if (gs->enemies[i].hp < 0) gs->enemies[i].hp = 0;
                 }
             }
@@ -322,7 +355,7 @@ void process_action(GameState* gs, ActionMessage* msg) {
             // Animation
             gs->anim.type = 6;
             gs->anim.timer = 2.0f;
-            gs->anim.damage = 185;
+            gs->anim.damage = 30;
             gs->anim.actor_type = msg->sender_type;
             gs->anim.actor_id = msg->sender_id;
             strncpy(gs->anim.actor_name, actor->name, 31);
@@ -468,6 +501,9 @@ void spawn_wave(GameState* gs) {
             memset(&gs->enemies[i].inv, 0, sizeof(Inventory));
             spawned++;
             gs->total_spawned++;
+            if (i >= gs->num_enemies) {
+                gs->num_enemies = i + 1;
+            }
             // Note: enemy thread must be actively checking is_alive.
             // Since ASP threads loop checking is_alive, they will automatically wake up and start acting.
         }
