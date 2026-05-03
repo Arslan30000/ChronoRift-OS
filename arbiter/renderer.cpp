@@ -103,7 +103,10 @@ static void drawEnemySprite(sf::RenderWindow& w, float cx, float cy, sf::Color c
 
 // ===================== ENTITY CARD =====================
 static void drawEntityCard(sf::RenderWindow& win, sf::Font& font, Entity* e, float x, float y, float w, float h,
-                           bool isPlayer, bool isActive, sf::Sprite* pngSprite = NULL, sf::Sprite** wpSprs = NULL, int numWp = 0, int* unique_wps = NULL, int selected_wp = 0, float time_acc = 0, sf::Sprite* deathSprite = NULL) {
+                           bool isPlayer, bool isActive, sf::Sprite* pngSprite = NULL, 
+                           sf::Sprite** wpSprs = NULL, int numWp = 0, int* unique_wps = NULL, 
+                           int selected_wp = 0, float time_acc = 0, 
+                           sf::Sprite* deathSprite = NULL) { 
     // Stun shaking effect
     if (e->is_alive && e->is_stunned) {
         x += sinf(time_acc * 30.0f) * 3.0f;
@@ -265,12 +268,7 @@ void* render_thread_func(void* arg) {
     sf::Texture deathTex;    bool hasDeath = deathTex.loadFromFile("assets/death.png");
     sf::Sprite  deathSpr;    if (hasDeath) deathSpr.setTexture(deathTex);
 
-    // --- Character Spritesheet ---
-    // ┌──────────────────────────────────────────────────────────────────┐
-    // │ EDIT THESE RECTANGLES to match YOUR spritesheet layout!         │
-    // │ Format: sf::IntRect(x, y, width, height) in pixels              │
-    // │ Open your spritesheet in any image editor and note pixel coords │
-    // └──────────────────────────────────────────────────────────────────┘
+  
     sf::Texture charSheet;
     bool hasCharSheet = charSheet.loadFromFile("assets/characters.png");
 
@@ -395,48 +393,37 @@ void* render_thread_func(void* arg) {
 
     int logScrollOffset = 0;
 
-    while (window.isOpen()) {
+   while (window.isOpen()) {
         sf::Event ev;
         while (window.pollEvent(ev)) {
             if (ev.type == sf::Event::Closed) {
                 window.close();
-                sem_wait(&gs->mutex);
-                gs->game_over = true;
-                sem_post(&gs->mutex);
+                sem_wait(&gs->mutex); gs->game_over = true; sem_post(&gs->mutex);
                 return NULL;
             }
-            // ===== MOUSE SCROLL HANDLING =====
             if (ev.type == sf::Event::MouseWheelScrolled) {
                 if (ev.mouseWheelScroll.wheel == sf::Mouse::VerticalWheel) {
-                    logScrollOffset += (int)ev.mouseWheelScroll.delta; // Scroll up -> view older -> increase offset
+                    logScrollOffset += (int)ev.mouseWheelScroll.delta;
                     if (logScrollOffset < 0) logScrollOffset = 0;
                 }
             }
-            
-            // ===== MOUSE CLICK HANDLING =====
             if (ev.type == sf::Event::MouseButtonPressed && ev.mouseButton.button == sf::Mouse::Left) {
                 sf::Vector2i pixelPos(ev.mouseButton.x, ev.mouseButton.y);
                 sf::Vector2f worldPos = window.mapPixelToCoords(pixelPos);
-                float mx = worldPos.x;
-                float my = worldPos.y;
+                float mx = worldPos.x; float my = worldPos.y;
+                
+                // MOUSE WRITES TO REAL SHARED MEMORY
                 sem_wait(&gs->mutex);
-
-                // Phase 1: Action selection — check action buttons & weapon clicks
+                
                 if (gs->gui.waiting && gs->gui.phase == 1 && !gs->gui.input_ready) {
-                    // Check action buttons
                     for (int b = 0; b < NUM_BTNS; b++) {
                         if (btnRects[b].contains(mx, my)) {
                             gs->gui.selected_action = btnAction[b];
-                            // Actions needing a target go to phase 2
-                            if (btnAction[b] <= 3) {
-                                gs->gui.phase = 2; // need target
-                            } else {
-                                gs->gui.input_ready = true;
-                            }
+                            if (btnAction[b] <= 3) gs->gui.phase = 2;
+                            else gs->gui.input_ready = true;
                             break;
                         }
                     }
-                    // Check weapon clicks
                     for (int k = 0; k < numActiveWeapons; k++) {
                         if (activeWeaponRects[k].contains(mx, my)) {
                             gs->gui.selected_weapon = activeWeaponIds[k];
@@ -444,7 +431,6 @@ void* render_thread_func(void* arg) {
                         }
                     }
                 }
-                // Phase 2: Target selection — check enemy cards
                 else if (gs->gui.waiting && gs->gui.phase == 2 && !gs->gui.input_ready) {
                     for (int e = 0; e < gs->num_enemies; e++) {
                         if (gs->enemies[e].is_alive && enemyCardRects[e].contains(mx, my)) {
@@ -454,208 +440,126 @@ void* render_thread_func(void* arg) {
                         }
                     }
                 }
-                // Check weapon drop clicks
                 if (gs->weapon_drop.pending && !gs->weapon_drop.player_chose) {
-                    if (dropYesRect.contains(mx, my)) {
-                        gs->weapon_drop.player_chose = true;
-                        gs->weapon_drop.player_took = true;
-                    } else if (dropNoRect.contains(mx, my)) {
-                        gs->weapon_drop.player_chose = true;
-                        gs->weapon_drop.player_took = false;
-                    }
+                    if (dropYesRect.contains(mx, my)) { gs->weapon_drop.player_chose = true; gs->weapon_drop.player_took = true; }
+                    else if (dropNoRect.contains(mx, my)) { gs->weapon_drop.player_chose = true; gs->weapon_drop.player_took = false; }
                 }
-                
-                // Check relic drop clicks
                 if (gs->relic_drop.pending && !gs->relic_drop.player_chose) {
-                    if (relicYesRect.contains(mx, my)) {
-                        gs->relic_drop.player_chose = true;
-                        gs->relic_drop.player_took = true;
-                    } else if (relicNoRect.contains(mx, my)) {
-                        gs->relic_drop.player_chose = true;
-                        gs->relic_drop.player_took = false;
-                    }
+                    if (relicYesRect.contains(mx, my)) { gs->relic_drop.player_chose = true; gs->relic_drop.player_took = true; }
+                    else if (relicNoRect.contains(mx, my)) { gs->relic_drop.player_chose = true; gs->relic_drop.player_took = false; }
                 }
-
-                // Quit button click
                 if (quitBtnRect.contains(mx, my)) {
-                    // Send SIGTERM to arbiter for graceful quit
-                    if (gs->arbiter_pid > 0) {
-                        kill(gs->arbiter_pid, SIGTERM);
-                    }
+                    if (gs->arbiter_pid > 0) kill(gs->arbiter_pid, SIGTERM);
                 }
-
                 sem_post(&gs->mutex);
             }
         }
-
+        
         float dt = clk.restart().asSeconds();
         time_acc += dt;
 
-        // Tick animation timer (outside mutex)
-        // We'll read it inside mutex below
-
         window.clear(BG_COLOR);
-
-        // Draw background PNG if available
         if (hasBg) window.draw(bgSprite);
 
+        // ========================================================
+        // THE SNAPSHOT FIX: Lock, Copy, Unlock Instantly!
+        // ========================================================
         sem_wait(&gs->mutex);
-        GamePhase phase = gs->phase;
-        bool gameOver = gs->game_over;
+        
+        // Advance animation timer in real shared memory
+        if (gs->anim.type > 0 && gs->anim.timer > 0) {
+            gs->anim.timer -= dt;
+            if (gs->anim.timer <= 0) gs->anim.type = 0;
+        }
+        
+        // Take a lightning-fast snapshot of the entire state
+        GameState snap;
+        memcpy(&snap, gs, sizeof(GameState));
+        
+        sem_post(&gs->mutex); // UNLOCK IMMEDIATELY!
+        // ========================================================
+
+        // WE NOW DRAW ENTIRELY FROM 'snap' INSTEAD OF 'gs'
+        GamePhase phase = snap.phase;
+        bool gameOver = snap.game_over;
 
         if (phase == PHASE_WAITING) {
-            // ============ TITLE / WAITING SCREEN ============
-            // Animated background particles
             for (int i = 0; i < 40; i++) {
                 float px = fmod(i * 73.7f + time_acc * (10 + i % 5), 1024.0f);
                 float py = fmod(i * 47.3f + time_acc * (8 + i % 3), 768.0f);
-                sf::CircleShape dot(1.5f + (i % 3));
-                dot.setPosition(px, py);
-                dot.setFillColor(sf::Color(100, 140, 220, 30 + (i * 7) % 50));
+                sf::CircleShape dot(1.5f + (i % 3)); dot.setPosition(px, py); dot.setFillColor(sf::Color(100, 140, 220, 30 + (i * 7) % 50));
                 window.draw(dot);
             }
-
-            // Title — use PNG logo if available, else text
             if (hasTitle) {
                 sf::FloatRect tlb = titleSprite.getLocalBounds();
-                titleSprite.setPosition(550 - tlb.width / 2, 160);
-                window.draw(titleSprite);
+                titleSprite.setPosition(550 - tlb.width / 2, 160); window.draw(titleSprite);
             } else {
-                sf::Text title("CHRONO RIFT", font, 64);
-                title.setStyle(sf::Text::Bold);
+                sf::Text title("CHRONO RIFT", font, 64); title.setStyle(sf::Text::Bold);
                 float glow = (sinf(time_acc * 2.0f) + 1.0f) * 0.5f;
-                sf::Uint8 gb = (sf::Uint8)(180 + 75 * glow);
-                title.setFillColor(sf::Color(gb, 220, 255));
-                sf::FloatRect tb = title.getLocalBounds();
-                title.setPosition(550 - tb.width / 2, 200);
-                window.draw(title);
+                title.setFillColor(sf::Color((sf::Uint8)(180 + 75 * glow), 220, 255));
+                sf::FloatRect tb = title.getLocalBounds(); title.setPosition(550 - tb.width / 2, 200); window.draw(title);
             }
+            sf::Text sub("A Multi-Process Tactical Battle", font, 20); sub.setFillColor(sf::Color(160, 180, 220));
+            sf::FloatRect sb2 = sub.getLocalBounds(); sub.setPosition(550 - sb2.width / 2, 285); window.draw(sub);
+            
+            sf::RectangleShape line(sf::Vector2f(400, 2)); line.setPosition(350, 320); line.setFillColor(sf::Color(100, 140, 220, 120)); window.draw(line);
+            sf::Text seed("Operator: Muhammad Arslan | Seed: 23i-0572", font, 14); seed.setFillColor(GOLD);
+            sf::FloatRect seedB = seed.getLocalBounds(); seed.setPosition(550 - seedB.width / 2, 340); window.draw(seed);
 
-            // Subtitle
-            sf::Text sub("A Multi-Process Tactical Battle", font, 20);
-            sub.setFillColor(sf::Color(160, 180, 220));
-            sf::FloatRect sb2 = sub.getLocalBounds();
-            sub.setPosition(550 - sb2.width / 2, 285);
-            window.draw(sub);
-
-            // Decorative line
-            sf::RectangleShape line(sf::Vector2f(400, 2));
-            line.setPosition(350, 320);
-            line.setFillColor(sf::Color(100, 140, 220, 120));
-            window.draw(line);
-
-            // Seed info
-            sf::Text seed("Operator: Muhammad Arslan | Seed: 23i-0572", font, 14);
-            seed.setFillColor(GOLD);
-            sf::FloatRect seedB = seed.getLocalBounds();
-            seed.setPosition(550 - seedB.width / 2, 340);
-            window.draw(seed);
-
-            // Waiting text (pulsing)
             float pulse = (sinf(time_acc * 3.0f) + 1.0f) * 0.5f;
-            sf::Uint8 alpha = (sf::Uint8)(120 + 135 * pulse);
-            sf::Text wait("Waiting for players to connect...", font, 18);
-            wait.setFillColor(sf::Color(200, 200, 220, alpha));
-            sf::FloatRect wb = wait.getLocalBounds();
-            wait.setPosition(550 - wb.width / 2, 420);
-            window.draw(wait);
+            sf::Text wait("Waiting for players to connect...", font, 18); wait.setFillColor(sf::Color(200, 200, 220, (sf::Uint8)(120 + 135 * pulse)));
+            sf::FloatRect wb = wait.getLocalBounds(); wait.setPosition(550 - wb.width / 2, 420); window.draw(wait);
 
-            // Connection status
-            char cstat[128];
-            snprintf(cstat, sizeof(cstat), "HIP: %s   |   ASP: %s",
-                gs->hip_connected ? "CONNECTED" : "waiting...",
-                gs->asp_connected ? "CONNECTED" : "waiting...");
-            sf::Text cs(cstat, font, 14);
-            cs.setFillColor(sf::Color(140, 160, 180));
-            sf::FloatRect csb = cs.getLocalBounds();
-            cs.setPosition(550 - csb.width / 2, 460);
-            window.draw(cs);
-
+            char cstat[128]; snprintf(cstat, sizeof(cstat), "HIP: %s   |   ASP: %s", snap.hip_connected ? "CONNECTED" : "waiting...", snap.asp_connected ? "CONNECTED" : "waiting...");
+            sf::Text cs(cstat, font, 14); cs.setFillColor(sf::Color(140, 160, 180));
+            sf::FloatRect csb = cs.getLocalBounds(); cs.setPosition(550 - csb.width / 2, 460); window.draw(cs);
+            
         } else if (phase == PHASE_BATTLE || (gameOver && phase == PHASE_GAME_OVER)) {
-            // ============ BATTLE SCREEN ============
-
             // Top bar
             drawRoundedRect(window, 0, 0, 1024, 42, sf::Color(15, 20, 35));
-            sf::Text titleBar("CHRONO RIFT", font, 16);
-            titleBar.setStyle(sf::Text::Bold);
-            titleBar.setFillColor(CYAN_T);
-            titleBar.setPosition(15, 10);
-            window.draw(titleBar);
-
-            char tickStr[64];
-            snprintf(tickStr, sizeof(tickStr), "Tick: %d", gs->tick_count);
-            sf::Text tickT(tickStr, font, 13);
-            tickT.setFillColor(TEXT_DIM);
-            tickT.setPosition(160, 13);
-            window.draw(tickT);
-
-            // Kill counter
-            char killStr[64];
-            snprintf(killStr, sizeof(killStr), "Kills: %d/10", gs->total_kills);
-            sf::Text killT(killStr, font, 13);
-            killT.setFillColor(HP_GREEN);
-            killT.setPosition(260, 13);
-            window.draw(killT);
-
-            // Quit button (top-right)
+            sf::Text titleBar("CHRONO RIFT", font, 16); titleBar.setStyle(sf::Text::Bold); titleBar.setFillColor(CYAN_T); titleBar.setPosition(15, 10); window.draw(titleBar);
+            
+            char tickStr[64]; snprintf(tickStr, sizeof(tickStr), "Tick: %d", snap.tick_count);
+            sf::Text tickT(tickStr, font, 13); tickT.setFillColor(TEXT_DIM); tickT.setPosition(160, 13); window.draw(tickT);
+            
+            char killStr[64]; snprintf(killStr, sizeof(killStr), "Kills: %d/10", snap.total_kills);
+            sf::Text killT(killStr, font, 13); killT.setFillColor(HP_GREEN); killT.setPosition(260, 13); window.draw(killT);
+            
             drawRoundedRect(window, 944, 5, 70, 30, sf::Color(120, 20, 20), HP_RED, 1);
-            sf::Text quitT("QUIT", font, 12);
-            quitT.setFillColor(TEXT_WHITE); quitT.setStyle(sf::Text::Bold);
-            quitT.setPosition(959, 10);
-            window.draw(quitT);
+            sf::Text quitT("QUIT", font, 12); quitT.setFillColor(TEXT_WHITE); quitT.setStyle(sf::Text::Bold); quitT.setPosition(959, 10); window.draw(quitT);
             quitBtnRect = sf::FloatRect(944, 5, 70, 30);
 
-            // Active turn indicator
-            if (gs->active_turn_type >= 0) {
-                Entity* ae = (gs->active_turn_type == 0) ? &gs->players[gs->active_turn_id] : &gs->enemies[gs->active_turn_id];
-                char turnBuf[64];
-                snprintf(turnBuf, sizeof(turnBuf), "Active: %s %s", gs->active_turn_type == 0 ? "[P]" : "[E]", ae->name);
-                sf::Text turnT(turnBuf, font, 13);
-                turnT.setFillColor(GOLD);
-                turnT.setPosition(420, 13);
-                window.draw(turnT);
+            if (snap.active_turn_type >= 0) {
+                Entity* ae = (snap.active_turn_type == 0) ? &snap.players[snap.active_turn_id] : &snap.enemies[snap.active_turn_id];
+                char turnBuf[64]; snprintf(turnBuf, sizeof(turnBuf), "Active: %s %s", snap.active_turn_type == 0 ? "[P]" : "[E]", ae->name);
+                sf::Text turnT(turnBuf, font, 13); turnT.setFillColor(GOLD); turnT.setPosition(420, 13); window.draw(turnT);
+            }
+            if (snap.ultimate_active) {
+                sf::Text ultT(">>> ULTIMATE ACTIVE <<<", font, 14); ultT.setFillColor(GOLD); ultT.setPosition(650, 12); ultT.setStyle(sf::Text::Bold); window.draw(ultT);
+                sf::RectangleShape ultOverlay(sf::Vector2f(1024, 768)); ultOverlay.setFillColor(ULT_GOLD); window.draw(ultOverlay);
             }
 
-            if (gs->ultimate_active) {
-                sf::Text ultT(">>> ULTIMATE ACTIVE <<<", font, 14);
-                ultT.setFillColor(GOLD);
-                ultT.setPosition(650, 12);
-                ultT.setStyle(sf::Text::Bold);
-                window.draw(ultT);
-                // Overlay
-                sf::RectangleShape ultOverlay(sf::Vector2f(1024, 768));
-                ultOverlay.setFillColor(ULT_GOLD);
-                window.draw(ultOverlay);
-            }
+            sf::Text pLabel("PLAYERS", font, 14); pLabel.setFillColor(PLAYER_COLOR); pLabel.setStyle(sf::Text::Bold); pLabel.setPosition(20, 50); window.draw(pLabel);
+            sf::Text eLabel("ENEMIES", font, 14); eLabel.setFillColor(ENEMY_COLOR); eLabel.setStyle(sf::Text::Bold); eLabel.setPosition(540, 50); window.draw(eLabel);
 
-            // Section labels
-            sf::Text pLabel("PLAYERS", font, 14);
-            pLabel.setFillColor(PLAYER_COLOR); pLabel.setStyle(sf::Text::Bold);
-            pLabel.setPosition(20, 50);
-            window.draw(pLabel);
+            float cardW = 510, cardH = 82, cardGap = 8;
+            float cardsEndY = 72 + snap.num_players * (cardH + cardGap);
+            float btnY0 = cardsEndY + 10; if (btnY0 < 437) btnY0 = 437;
+            float panelY = btnY0 + 90; 
 
-            sf::Text eLabel("ENEMIES", font, 14);
-            eLabel.setFillColor(ENEMY_COLOR); eLabel.setStyle(sf::Text::Bold);
-            eLabel.setPosition(540, 50);
-            window.draw(eLabel);
-
-            // Player cards — pass PNG sprites
-            float cardW = 510, cardH = 82; // Slightly smaller to fit 1024
-            float cardGap = 8;
-            float cardsEndY = 72 + gs->num_players * (cardH + cardGap);
-            // Action buttons take ~85px when visible
-            float btnY0 = cardsEndY + 10;
-            if (btnY0 < 437) btnY0 = 437; // minimum Y coordinate
-            float panelY = btnY0 + 130; // space for action buttons
+            float shakeX = 0, shakeY = 0;
             
-            for (int i = 0; i < gs->num_players; i++) {
-                bool active = (gs->active_turn_type == 0 && gs->active_turn_id == i);
+            for (int i = 0; i < snap.num_players; i++) {
+                shakeX = 0; shakeY = 0;
+                if ((snap.anim.type == 1 || snap.anim.type == 2 || snap.anim.type == 3) && snap.anim.target_type == 0 && snap.anim.target_id == i && snap.anim.timer > 0) {
+                    shakeX = sinf(time_acc * 60) * 8.0f;
+                }
+                bool active = (snap.active_turn_type == 0 && snap.active_turn_id == i);
                 sf::Sprite* spr = (i < MAX_PLAYERS && hasPlayer[i]) ? &playerSpr[i] : NULL;
-                sf::Sprite* wSprites[11];
-                int wCount = 0;
-                int unique_wp[10] = {0};
+                
+                sf::Sprite* wSprites[11]; int wCount = 0; int unique_wp[10] = {0};
                 for (int s=0; s<INV_SLOTS; s++) { 
-                    int w = gs->players[i].inv.slots[s];
+                    int w = snap.players[i].inv.slots[s];
                     if (w > 0) {
                         bool dup = false;
                         for(int k=0; k<wCount; k++) if(unique_wp[k] == w) dup = true;
@@ -664,36 +568,26 @@ void* render_thread_func(void* arg) {
                 }
                 for (int k=0; k<wCount; k++) {
                     int w = unique_wp[k];
-                    if (w > 0 && hasWeapon[w - 1]) wSprites[k] = &weaponSpr[w - 1];
-                    else wSprites[k] = NULL;
+                    if (w > 0 && hasWeapon[w - 1]) wSprites[k] = &weaponSpr[w - 1]; else wSprites[k] = NULL;
                 }
-                // Eclipse Relic Check
-                if (gs->artifacts[2].exists && gs->artifacts[2].locked && gs->artifacts[2].owner_type == 0 && gs->artifacts[2].owner_id == i) {
-                    if (hasRelic) {
-                        wSprites[wCount] = &relicSpr;
-                        unique_wp[wCount] = -1; // -1 denotes Eclipse Relic
-                        wCount++;
-                    }
+                if (snap.artifacts[2].exists && snap.artifacts[2].locked && snap.artifacts[2].owner_type == 0 && snap.artifacts[2].owner_id == i) {
+                    if (hasRelic) { wSprites[wCount] = &relicSpr; unique_wp[wCount] = -1; wCount++; }
                 }
-                
-                float px = 15;
-                float py = 72 + i * (cardH + 8);
-                
+
+                float px = 15; float py = 72 + i * (cardH + 8);
                 int hl_wp = 0;
                 if (active) {
-                    if (gs->gui.selected_weapon == 0 && wCount > 0) gs->gui.selected_weapon = unique_wp[0];
-                    hl_wp = gs->gui.selected_weapon;
-                } else if (wCount > 0) {
-                    hl_wp = unique_wp[0];
-                }
-                
-                drawEntityCard(window, font, &gs->players[i], px, py, cardW, cardH, true, active, spr, wSprites, wCount, unique_wp, hl_wp, time_acc, hasDeath ? &deathSpr : NULL);
+                    if (snap.gui.selected_weapon == 0 && wCount > 0) snap.gui.selected_weapon = unique_wp[0]; // Wait, we can't write to snap to save, but renderer doesn't use it anyway.
+                    hl_wp = snap.gui.selected_weapon;
+                } else if (wCount > 0) hl_wp = unique_wp[0];
+
+              
+                drawEntityCard(window, font, &snap.players[i], px + shakeX, py + shakeY, cardW, cardH, true, active, spr, wSprites, wCount, unique_wp, hl_wp, time_acc, (hasDeath ? &deathSpr : NULL));
                 playerCardRects[i] = sf::FloatRect(px, py, cardW, cardH);
-                
+
                 if (active) {
                     numActiveWeapons = 0;
-                    float eqX = px + cardW - 85;
-                    float eqY = py + 25;
+                    float eqX = px + cardW - 85; float eqY = py + 25;
                     for (int k = 0; k < wCount; k++) {
                         if (unique_wp[k] == -1) continue;
                         activeWeaponRects[numActiveWeapons] = sf::FloatRect(eqX + 5 + k * 15, eqY + 12, 24, 24);
@@ -703,16 +597,17 @@ void* render_thread_func(void* arg) {
                 }
             }
 
-            // Enemy cards — pass PNG sprites
-            for (int i = 0; i < gs->num_enemies; i++) {
-                bool active = (gs->active_turn_type == 1 && gs->active_turn_id == i);
+            for (int i = 0; i < snap.num_enemies; i++) {
+                shakeX = 0; shakeY = 0;
+                if ((snap.anim.type == 1 || snap.anim.type == 2 || snap.anim.type == 3) && snap.anim.target_type == 1 && snap.anim.target_id == i && snap.anim.timer > 0) {
+                    shakeX = sinf(time_acc * 60) * 8.0f;
+                }
+                bool active = (snap.active_turn_type == 1 && snap.active_turn_id == i);
                 sf::Sprite* spr = (i < MAX_ENEMIES && hasEnemy[i]) ? &enemySpr[i] : NULL;
                 
-                sf::Sprite* wSprites[11];
-                int wCount = 0;
-                int unique_wp[10] = {0};
+                sf::Sprite* wSprites[11]; int wCount = 0; int unique_wp[10] = {0};
                 for (int s=0; s<INV_SLOTS; s++) { 
-                    int w = gs->enemies[i].inv.slots[s];
+                    int w = snap.enemies[i].inv.slots[s];
                     if (w > 0) {
                         bool dup = false;
                         for(int k=0; k<wCount; k++) if(unique_wp[k] == w) dup = true;
@@ -721,434 +616,234 @@ void* render_thread_func(void* arg) {
                 }
                 for (int k=0; k<wCount; k++) {
                     int w = unique_wp[k];
-                    if (w > 0 && hasWeapon[w - 1]) wSprites[k] = &weaponSpr[w - 1];
-                    else wSprites[k] = NULL;
+                    if (w > 0 && hasWeapon[w - 1]) wSprites[k] = &weaponSpr[w - 1]; else wSprites[k] = NULL;
                 }
-                // Eclipse Relic Check
-                if (gs->artifacts[2].exists && gs->artifacts[2].locked && gs->artifacts[2].owner_type == 1 && gs->artifacts[2].owner_id == i) {
-                    if (hasRelic) {
-                        wSprites[wCount] = &relicSpr;
-                        unique_wp[wCount] = -1;
-                        wCount++;
-                    }
+                if (snap.artifacts[2].exists && snap.artifacts[2].locked && snap.artifacts[2].owner_type == 1 && snap.artifacts[2].owner_id == i) {
+                    if (hasRelic) { wSprites[wCount] = &relicSpr; unique_wp[wCount] = -1; wCount++; }
                 }
-                
+
                 float ey = 72 + i * (cardH + 8);
                 int hl_wp = (wCount > 0) ? unique_wp[0] : 0;
-                
                 if (i >= 4) {
-                    drawEntityCard(window, font, &gs->enemies[i], 800, 72 + (i - 4) * (cardH + 8), 210, cardH, false, active, spr, wSprites, wCount, unique_wp, hl_wp, time_acc, hasDeath ? &deathSpr : NULL);
+                drawEntityCard(window, font, &snap.enemies[i], 800 + shakeX, 72 + (i - 4) * (cardH + 8) + shakeY, 210, cardH, false, active, spr, wSprites, wCount, unique_wp, hl_wp, time_acc, (hasDeath ? &deathSpr : NULL));    
+                enemyCardRects[i] = sf::FloatRect(800, 72 + (i-4)*(cardH+8), 210, cardH);
                 } else {
-                    drawEntityCard(window, font, &gs->enemies[i], 540, ey, 245, cardH, false, active, spr, wSprites, wCount, unique_wp, hl_wp, time_acc, hasDeath ? &deathSpr : NULL);
-                }
-            }
-
-            // ============ ACTION BUTTONS (when player turn + GUI waiting) ============
-            if (gs->gui.waiting && gs->active_turn_type == 0 && !gs->gui.input_ready) {
-                float btnX = 15;
-                float btnW = 165, btnH = 32, gap = 6;
-
-                if (gs->gui.phase == 1) {
-                    // Draw action buttons
-                    drawRoundedRect(window, btnX - 5, btnY0 - 5, 530, 120, sf::Color(15, 25, 45, 220), CYAN_T, 1);
-                    sf::Text prompt("SELECT ACTION:", font, 12);
-                    prompt.setFillColor(GOLD); prompt.setStyle(sf::Text::Bold);
-                    prompt.setPosition(btnX, btnY0 - 2);
-                    window.draw(prompt);
-                    btnY0 += 16;
-
-                    for (int b = 0; b < NUM_BTNS; b++) {
-                        float bx = btnX + (b % 3) * (btnW + gap);
-                        float by = btnY0 + (b / 3) * (btnH + gap);
-                        
-                        bool clickable = true;
-                        sf::Color btnCol(30, 70, 130);
-                        sf::Color btnOut(60, 130, 220);
-                        
-                        // Ultimate ability logic
-                        if (b == 6) {
-                            bool hasSol = false, hasLun = false;
-                            int pid = gs->active_turn_id; // Absolute truth of whose turn it is
-                            for (int s = 0; s < INV_SLOTS; s++) {
-                                if (gs->players[pid].inv.slots[s] == 1) hasSol = true;
-                                if (gs->players[pid].inv.slots[s] == 2) hasLun = true;
-                            }
-                            if (!hasSol || !hasLun) {
-                                clickable = false;
-                                btnCol = sf::Color(30, 30, 30);
-                                btnOut = sf::Color(80, 80, 80);
-                            } else {
-                                btnCol = sf::Color(100, 70, 20);
-                                btnOut = GOLD;
-                            }
-                        }
-                        
-                        drawRoundedRect(window, bx, by, btnW, btnH, btnCol, btnOut, 2);
-                        sf::Text bt(btnLabels[b], font, 13);
-                        bt.setFillColor(clickable ? TEXT_WHITE : sf::Color(120, 120, 120));
-                        bt.setStyle(sf::Text::Bold);
-                        bt.setPosition(bx + 10, by + 7);
-                        window.draw(bt);
-                        
-                        if (clickable) {
-                            btnRects[b] = sf::FloatRect(bx, by, btnW, btnH);
-                        } else {
-                            btnRects[b] = sf::FloatRect(0, 0, 0, 0);
-                        }
-                    }
-                } else if (gs->gui.phase == 2) {
-                    // Target selection prompt
-                    drawRoundedRect(window, btnX - 5, btnY0 - 5, 490, 30, sf::Color(80, 20, 20, 220), ENEMY_COLOR, 2);
-                    sf::Text prompt("CLICK AN ENEMY TO TARGET:", font, 14);
-                    prompt.setFillColor(sf::Color(255, 200, 200)); prompt.setStyle(sf::Text::Bold);
-                    prompt.setPosition(btnX + 10, btnY0 + 2);
-                    window.draw(prompt);
-                }
-            }
-
-            for (int i = 0; i < gs->num_enemies; i++) {
-                float ey = 72 + i * (cardH + 8);
-                if (i >= 4) {
-                    enemyCardRects[i] = sf::FloatRect(800, 72 + (i-4)*(cardH+8), 210, cardH);
-                } else {
+                    // Replace the second enemy call with this:
+drawEntityCard(window, font, &snap.enemies[i], 540 + shakeX, ey + shakeY, 245, cardH, false, active, spr, wSprites, wCount, unique_wp, hl_wp, time_acc, (hasDeath ? &deathSpr : NULL));
                     enemyCardRects[i] = sf::FloatRect(540, ey, 245, cardH);
                 }
             }
 
-            // ============ INVENTORY PANEL ============
+            if (snap.gui.waiting && snap.active_turn_type == 0 && !snap.gui.input_ready) {
+                float btnX = 15; float btnW = 165, btnH = 32, gap = 6;
+                if (snap.gui.phase == 1) {
+                    drawRoundedRect(window, btnX - 5, btnY0 - 5, 530, 80, sf::Color(15, 25, 45, 220), CYAN_T, 1);
+                    sf::Text prompt("SELECT ACTION:", font, 12); prompt.setFillColor(GOLD); prompt.setStyle(sf::Text::Bold); prompt.setPosition(btnX, btnY0 - 2); window.draw(prompt);
+                    btnY0 += 16;
+                    for (int b = 0; b < NUM_BTNS; b++) {
+                        float bx = btnX + (b % 3) * (btnW + gap); float by = btnY0 + (b / 3) * (btnH + gap);
+                        if (b == 6) {
+                            bool hasSol = false, hasLun = false; int pid = snap.gui.for_player_id;
+                            for (int s = 0; s < INV_SLOTS; s++) {
+                                if (snap.players[pid].inv.slots[s] == 1) hasSol = true;
+                                if (snap.players[pid].inv.slots[s] == 2) hasLun = true;
+                            }
+                            if (!hasSol || !hasLun) continue;
+                        }
+                        sf::Color btnCol(30, 70, 130); sf::Color btnOut(60, 130, 220);
+                        if (b == 6) { btnCol = sf::Color(100, 70, 20); btnOut = GOLD; }
+                        drawRoundedRect(window, bx, by, btnW, btnH, btnCol, btnOut, 2);
+                        sf::Text bt(btnLabels[b], font, 13); bt.setFillColor(TEXT_WHITE); bt.setStyle(sf::Text::Bold); bt.setPosition(bx + 10, by + 7); window.draw(bt);
+                        btnRects[b] = sf::FloatRect(bx, by, btnW, btnH);
+                    }
+                } else if (snap.gui.phase == 2) {
+                    drawRoundedRect(window, btnX - 5, btnY0 - 5, 490, 30, sf::Color(80, 20, 20, 220), ENEMY_COLOR, 2);
+                    sf::Text prompt("CLICK AN ENEMY TO TARGET:", font, 14); prompt.setFillColor(sf::Color(255, 200, 200)); prompt.setStyle(sf::Text::Bold); prompt.setPosition(btnX + 10, btnY0 + 2); window.draw(prompt);
+                }
+            }
+
             float invY = panelY;
             drawRoundedRect(window, 15, invY, 490, 60, PANEL_BG, sf::Color(60, 80, 120), 1);
-            
             int disp_pid = 0;
-            if (gs->active_turn_type == 0 && gs->active_turn_id >= 0 && gs->active_turn_id < gs->num_players) {
-                disp_pid = gs->active_turn_id;
+            if (snap.active_turn_type == 0 && snap.active_turn_id >= 0 && snap.active_turn_id < snap.num_players) {
+                disp_pid = snap.active_turn_id;
             }
-            
             char invL[32]; snprintf(invL, sizeof(invL), "INVENTORY (P%d)", disp_pid);
-            sf::Text invLabel(invL, font, 11);
-            invLabel.setFillColor(CYAN_T);
-            invLabel.setPosition(20, invY + 3);
-            window.draw(invLabel);
-
-            if (gs->num_players > 0) {
+            sf::Text invLabel(invL, font, 11); invLabel.setFillColor(CYAN_T); invLabel.setPosition(20, invY + 3); window.draw(invLabel);
+            
+            if (snap.num_players > 0) {
                 for (int s = 0; s < INV_SLOTS; s++) {
-                    float sx = 20 + s * 23;
-                    float sy = invY + 20;
-                    int wid = gs->players[disp_pid].inv.slots[s];
-                    sf::Color slotCol = (wid == 0) ? sf::Color(30, 35, 45) :
-                        (wid == 1) ? sf::Color(220, 180, 40) :
-                        (wid == 2) ? sf::Color(100, 120, 220) :
-                        (wid == 3) ? sf::Color(140, 140, 140) :
-                        (wid == 4) ? sf::Color(80, 180, 80) :
-                        sf::Color(100, 60, 180);
+                    float sx = 20 + s * 23; float sy = invY + 20;
+                    int wid = snap.players[disp_pid].inv.slots[s];
+                    sf::Color slotCol = (wid == 0) ? sf::Color(30, 35, 45) : (wid == 1) ? sf::Color(220, 180, 40) : (wid == 2) ? sf::Color(100, 120, 220) : (wid == 3) ? sf::Color(140, 140, 140) : (wid == 4) ? sf::Color(80, 180, 80) : sf::Color(100, 60, 180);
                     drawRoundedRect(window, sx, sy, 22, 30, slotCol, sf::Color(60,70,80), 1);
                     if (wid > 0) {
-                        // Use weapon PNG if available
                         int widx = wid - 1;
                         if (widx >= 0 && widx < NUM_WEAPONS && hasWeapon[widx]) {
                             weaponSpr[widx].setPosition(sx + 1, sy + 1);
                             sf::FloatRect wb2 = weaponSpr[widx].getLocalBounds();
-                            if (wb2.width > 0 && wb2.height > 0)
-                                weaponSpr[widx].setScale(20.f / wb2.width, 28.f / wb2.height);
+                            if (wb2.width > 0 && wb2.height > 0) weaponSpr[widx].setScale(20.f / wb2.width, 28.f / wb2.height);
                             window.draw(weaponSpr[widx]);
                         } else {
                             const Weapon* wp = get_weapon_by_id(wid);
                             if (wp) {
                                 char wc[4]; wc[0] = wp->name[0]; wc[1] = '\0';
-                                sf::Text wt(wc, font, 10);
-                                wt.setFillColor(TEXT_WHITE);
-                                wt.setPosition(sx + 6, sy + 8);
-                                window.draw(wt);
+                                sf::Text wt(wc, font, 10); wt.setFillColor(TEXT_WHITE); wt.setPosition(sx + 6, sy + 8); window.draw(wt);
                             }
                         }
                     }
                 }
             }
 
-            // ============ ARTIFACT PANEL ============
             float artY = invY + 65;
             drawRoundedRect(window, 15, artY, 490, 40, PANEL_BG, sf::Color(120, 100, 40), 1);
-            sf::Text artLabel("ARTIFACTS", font, 11);
-            artLabel.setFillColor(GOLD); artLabel.setPosition(20, artY + 3); window.draw(artLabel);
-
+            sf::Text artLabel("ARTIFACTS", font, 11); artLabel.setFillColor(GOLD); artLabel.setPosition(20, artY + 3); window.draw(artLabel);
             const char* artNames[] = {"Solar Core", "Lunar Blade", "Eclipse Relic"};
             for (int a = 0; a < 3; a++) {
                 float ax = 20 + a * 160;
-                if (!gs->artifacts[a].exists) continue;
+                if (!snap.artifacts[a].exists) continue;
                 char abuf[64];
-                if (gs->artifacts[a].locked) {
-                    const char* oType = gs->artifacts[a].owner_type == 0 ? "P" : "E";
-                    snprintf(abuf, sizeof(abuf), "%s [%s%d]", artNames[a], oType, gs->artifacts[a].owner_id);
+                if (snap.artifacts[a].locked) {
+                    const char* oType = snap.artifacts[a].owner_type == 0 ? "P" : "E";
+                    snprintf(abuf, sizeof(abuf), "%s [%s%d]", artNames[a], oType, snap.artifacts[a].owner_id);
                 } else {
                     snprintf(abuf, sizeof(abuf), "%s [free]", artNames[a]);
                 }
                 sf::Text at(abuf, font, 10);
-                at.setFillColor(gs->artifacts[a].locked ? sf::Color(255,200,100) : sf::Color(120,180,120));
-                at.setPosition(ax, artY + 22);
-                window.draw(at);
+                at.setFillColor(snap.artifacts[a].locked ? sf::Color(255,200,100) : sf::Color(120,180,120));
+                at.setPosition(ax, artY + 22); window.draw(at);
             }
 
-            // ============ ACTION LOG ============
             float logY = artY + 45;
-            float logH = 768 - logY - 10; // fill remaining space
-            if (logH < 80) logH = 80;
+            float logH = 768 - logY - 10; if (logH < 80) logH = 80;
             drawRoundedRect(window, 15, logY, 994, logH, PANEL_BG, sf::Color(60, 70, 90), 1);
-            sf::Text logLabel("ACTION LOG", font, 12);
-            logLabel.setFillColor(CYAN_T); logLabel.setStyle(sf::Text::Bold);
-            logLabel.setPosition(20, logY + 5);
-            window.draw(logLabel);
-
-            int maxLines = 11;
-            int totalLines = gs->log_count;
-            int currentMaxOffset = (totalLines > maxLines) ? (totalLines - maxLines) : 0;
+            sf::Text logLabel("ACTION LOG", font, 12); logLabel.setFillColor(CYAN_T); logLabel.setStyle(sf::Text::Bold); logLabel.setPosition(20, logY + 5); window.draw(logLabel);
             
-            // Constrain offset
+            int maxLines = 11;
+            int totalLines = snap.log_count;
+            int currentMaxOffset = (totalLines > maxLines) ? (totalLines - maxLines) : 0;
             if (logScrollOffset > currentMaxOffset) logScrollOffset = currentMaxOffset;
             if (logScrollOffset < 0) logScrollOffset = 0;
             
-            // logScrollOffset = 0 means at the bottom (newest)
-            // logScrollOffset = currentMaxOffset means at the top (oldest)
             int logStart = currentMaxOffset - logScrollOffset;
             int logEnd = logStart + maxLines;
             if (logEnd > totalLines) logEnd = totalLines;
             
             for (int l = logStart; l < logEnd; l++) {
                 int idx = l % LOG_SIZE;
-                sf::Text lt(gs->log_entries[idx].message, font, 11);
-                bool isImportant = (gs->log_entries[idx].message[0] == '*' || gs->log_entries[idx].message[0] == '>');
-                lt.setFillColor(isImportant ? GOLD : TEXT_DIM);
-                lt.setPosition(25, logY + 22 + (l - logStart) * 14);
-                window.draw(lt);
+                sf::Text lt(snap.log_entries[idx].message, font, 11);
+                bool isImportant = (snap.log_entries[idx].message[0] == '*' || snap.log_entries[idx].message[0] == '>');
+                lt.setFillColor(isImportant ? GOLD : TEXT_DIM); lt.setPosition(25, logY + 22 + (l - logStart) * 14); window.draw(lt);
             }
 
-            // ============ GAME OVER OVERLAY ============
-            if (gs->game_over) {
-                sf::RectangleShape overlay(sf::Vector2f(1024, 768));
-                overlay.setFillColor(sf::Color(0, 0, 0, 180));
-                window.draw(overlay);
-
-                const char* result = (gs->winner == 0) ? "VICTORY!" : (gs->winner == 2) ? "QUIT" : "DEFEAT!";
-                sf::Color resCol = (gs->winner == 0) ? GOLD : (gs->winner == 2) ? CYAN_T : HP_RED;
-                sf::Text resT(result, font, 72);
-                resT.setStyle(sf::Text::Bold);
-                resT.setFillColor(resCol);
-                sf::FloatRect rb = resT.getLocalBounds();
-                resT.setPosition(512 - rb.width / 2, 250);
-                window.draw(resT);
-
-                sf::Text subT("The battle has ended.", font, 20);
-                subT.setFillColor(TEXT_DIM);
-                sf::FloatRect sb3 = subT.getLocalBounds();
-                subT.setPosition(512 - sb3.width / 2, 340);
-                window.draw(subT);
+            if (snap.game_over) {
+                sf::RectangleShape overlay(sf::Vector2f(1024, 768)); overlay.setFillColor(sf::Color(0, 0, 0, 180)); window.draw(overlay);
+                const char* result = (snap.winner == 0) ? "VICTORY!" : (snap.winner == 2) ? "QUIT" : "DEFEAT!";
+                sf::Color resCol = (snap.winner == 0) ? GOLD : (snap.winner == 2) ? CYAN_T : HP_RED;
+                sf::Text resT(result, font, 72); resT.setStyle(sf::Text::Bold); resT.setFillColor(resCol);
+                sf::FloatRect rb = resT.getLocalBounds(); resT.setPosition(512 - rb.width / 2, 250); window.draw(resT);
+                sf::Text subT("The battle has ended.", font, 20); subT.setFillColor(TEXT_DIM);
+                sf::FloatRect sb3 = subT.getLocalBounds(); subT.setPosition(512 - sb3.width / 2, 340); window.draw(subT);
             }
 
             // ============ BATTLE ANIMATION OVERLAY ============
-            if (gs->anim.type > 0 && gs->anim.timer > 0) {
-                gs->anim.timer -= dt;
-                float alpha = (gs->anim.timer > 0) ? gs->anim.timer : 0;
-
-                // Find target rect
-                sf::FloatRect targetRect(0, 0, 1024, 768); // fallback full screen
-                bool hasTarget = false;
-                if (gs->anim.target_type == 0 && gs->anim.target_id >= 0 && gs->anim.target_id < MAX_PLAYERS) {
-                    targetRect = playerCardRects[gs->anim.target_id];
-                    hasTarget = true;
-                } else if (gs->anim.target_type == 1 && gs->anim.target_id >= 0 && gs->anim.target_id < MAX_ENEMIES) {
-                    targetRect = enemyCardRects[gs->anim.target_id];
-                    hasTarget = true;
+            if (snap.anim.type > 0 && snap.anim.timer > 0) {
+                float alpha = snap.anim.timer; // Dt has already been subtracted!
+                
+                sf::FloatRect targetRect(0, 0, 1024, 768); bool hasTarget = false;
+                if (snap.anim.target_type == 0 && snap.anim.target_id >= 0 && snap.anim.target_id < MAX_PLAYERS) {
+                    targetRect = playerCardRects[snap.anim.target_id]; hasTarget = true;
+                } else if (snap.anim.target_type == 1 && snap.anim.target_id >= 0 && snap.anim.target_id < MAX_ENEMIES) {
+                    targetRect = enemyCardRects[snap.anim.target_id]; hasTarget = true;
                 }
-
                 float cx = hasTarget ? (targetRect.left + targetRect.width / 2) : 512;
                 float cy = hasTarget ? (targetRect.top + targetRect.height / 2) : 384;
-
-                // Draw a card-sized highlight (or full screen if no specific target / ultimate)
+                
                 sf::RectangleShape flash(sf::Vector2f(hasTarget ? targetRect.width + 10 : 1024, hasTarget ? targetRect.height + 10 : 768));
-                if (hasTarget) {
-                    flash.setPosition(targetRect.left - 5, targetRect.top - 5);
-                } else {
-                    flash.setPosition(0, 0);
-                }
-
-                if (gs->anim.type == 1 || gs->anim.type == 3) {
-                    // STRIKE / WEAPON — red flash + damage number
-                    sf::Uint8 a8 = (sf::Uint8)(180 * alpha);
-                    flash.setFillColor(sf::Color(255, 30, 30, a8));
-                    window.draw(flash);
-                    
-                    char dmgBuf[64]; snprintf(dmgBuf, sizeof(dmgBuf), "-%d", gs->anim.damage);
-                    sf::Text dmgT(dmgBuf, font, 40);
-                    dmgT.setFillColor(sf::Color(255, 60, 60, (sf::Uint8)(255 * alpha)));
-                    dmgT.setStyle(sf::Text::Bold);
-                    sf::FloatRect db = dmgT.getLocalBounds();
-                    // Float upwards
-                    dmgT.setPosition(cx - db.width/2, cy - 20 - 40 * (1.0f - alpha));
-                    window.draw(dmgT);
-                } else if (gs->anim.type == 2) {
-                    // EXHAUST — blue pulse
-                    sf::Uint8 a8 = (sf::Uint8)(150 * alpha);
-                    flash.setFillColor(sf::Color(30, 60, 255, a8));
-                    window.draw(flash);
-                    
-                    sf::Text exT("STAMINA DRAIN", font, 24);
-                    exT.setFillColor(sf::Color(100, 180, 255, (sf::Uint8)(255 * alpha)));
-                    exT.setStyle(sf::Text::Bold);
-                    sf::FloatRect eb = exT.getLocalBounds();
-                    exT.setPosition(cx - eb.width/2, cy - 10);
-                    window.draw(exT);
-                } else if (gs->anim.type == 4) {
-                    // HEAL — green glow
-                    sf::Uint8 a8 = (sf::Uint8)(150 * alpha);
-                    flash.setFillColor(sf::Color(30, 255, 60, a8));
-                    window.draw(flash);
-                    
-                    char healBuf[32]; snprintf(healBuf, sizeof(healBuf), "+%d HP", gs->anim.damage);
-                    sf::Text ht(healBuf, font, 36);
-                    ht.setFillColor(sf::Color(80, 255, 100, (sf::Uint8)(255 * alpha)));
-                    ht.setStyle(sf::Text::Bold);
-                    sf::FloatRect hb = ht.getLocalBounds();
-                    ht.setPosition(cx - hb.width/2, cy - 20 - 40 * (1.0f - alpha));
-                    window.draw(ht);
-                } else if (gs->anim.type == 5) {
-                    // STUN — yellow flash + stars
-                    sf::Uint8 a8 = (sf::Uint8)(180 * alpha);
-                    flash.setFillColor(sf::Color(255, 220, 20, a8));
-                    window.draw(flash);
-                    
-                    sf::Text stT("STUNNED!", font, 32);
-                    stT.setFillColor(sf::Color(255, 255, 40, (sf::Uint8)(255 * alpha)));
-                    stT.setStyle(sf::Text::Bold);
-                    sf::FloatRect sb = stT.getLocalBounds();
-                    stT.setPosition(cx - sb.width/2, cy - 15);
-                    window.draw(stT);
-                    
-                    // Spinning stars
+                if (hasTarget) flash.setPosition(targetRect.left - 5, targetRect.top - 5); else flash.setPosition(0, 0);
+                
+                if (snap.anim.type == 1 || snap.anim.type == 3) {
+                    sf::Uint8 a8 = (sf::Uint8)(180 * alpha); flash.setFillColor(sf::Color(255, 30, 30, a8)); window.draw(flash);
+                    char dmgBuf[64]; snprintf(dmgBuf, sizeof(dmgBuf), "-%d", snap.anim.damage);
+                    sf::Text dmgT(dmgBuf, font, 40); dmgT.setFillColor(sf::Color(255, 60, 60, (sf::Uint8)(255 * alpha))); dmgT.setStyle(sf::Text::Bold);
+                    sf::FloatRect db = dmgT.getLocalBounds(); dmgT.setPosition(cx - db.width/2, cy - 20 - 40 * (1.0f - alpha)); window.draw(dmgT);
+                } else if (snap.anim.type == 2) {
+                    sf::Uint8 a8 = (sf::Uint8)(150 * alpha); flash.setFillColor(sf::Color(30, 60, 255, a8)); window.draw(flash);
+                    sf::Text exT("STAMINA DRAIN", font, 24); exT.setFillColor(sf::Color(100, 180, 255, (sf::Uint8)(255 * alpha))); exT.setStyle(sf::Text::Bold);
+                    sf::FloatRect eb = exT.getLocalBounds(); exT.setPosition(cx - eb.width/2, cy - 10); window.draw(exT);
+                } else if (snap.anim.type == 4) {
+                    sf::Uint8 a8 = (sf::Uint8)(150 * alpha); flash.setFillColor(sf::Color(30, 255, 60, a8)); window.draw(flash);
+                    char healBuf[32]; snprintf(healBuf, sizeof(healBuf), "+%d HP", snap.anim.damage);
+                    sf::Text ht(healBuf, font, 36); ht.setFillColor(sf::Color(80, 255, 100, (sf::Uint8)(255 * alpha))); ht.setStyle(sf::Text::Bold);
+                    sf::FloatRect hb = ht.getLocalBounds(); ht.setPosition(cx - hb.width/2, cy - 20 - 40 * (1.0f - alpha)); window.draw(ht);
+                } else if (snap.anim.type == 5) {
+                    sf::Uint8 a8 = (sf::Uint8)(180 * alpha); flash.setFillColor(sf::Color(255, 220, 20, a8)); window.draw(flash);
+                    sf::Text stT("STUNNED!", font, 32); stT.setFillColor(sf::Color(255, 255, 40, (sf::Uint8)(255 * alpha))); stT.setStyle(sf::Text::Bold);
+                    sf::FloatRect sb = stT.getLocalBounds(); stT.setPosition(cx - sb.width/2, cy - 15); window.draw(stT);
                     for (int s = 0; s < 4; s++) {
                         float angle = time_acc * 4 + s * 1.57f;
-                        float sx = cx + cosf(angle) * (targetRect.width/2 + 10);
-                        float sy = cy + sinf(angle) * (targetRect.height/2 + 10);
-                        sf::CircleShape star(5, 5);
-                        star.setPosition(sx, sy);
-                        star.setFillColor(sf::Color(255, 255, 80, (sf::Uint8)(200 * alpha)));
-                        window.draw(star);
+                        float sx = cx + cosf(angle) * (targetRect.width/2 + 10); float sy = cy + sinf(angle) * (targetRect.height/2 + 10);
+                        sf::CircleShape star(5, 5); star.setPosition(sx, sy); star.setFillColor(sf::Color(255, 255, 80, (sf::Uint8)(200 * alpha))); window.draw(star);
                     }
-                } else if (gs->anim.type == 6) {
-                    // ULTIMATE — gold explosion (always full screen)
+                } else if (snap.anim.type == 6) {
                     float pulse = sinf(time_acc * 10) * 0.3f + 0.7f;
                     sf::Uint8 a8 = (sf::Uint8)(180 * alpha * pulse);
-                    sf::RectangleShape fsFlash(sf::Vector2f(1024, 768));
-                    fsFlash.setFillColor(sf::Color(255, 200, 0, a8));
-                    window.draw(fsFlash);
-                    
-                    sf::Text ultT("ULTIMATE!", font, 64);
-                    ultT.setFillColor(sf::Color(255, 215, 0, (sf::Uint8)(255 * alpha)));
-                    ultT.setStyle(sf::Text::Bold);
-                    sf::FloatRect ub = ultT.getLocalBounds();
-                    ultT.setPosition(512 - ub.width/2, 300);
-                    window.draw(ultT);
-                    
-                    char udBuf[32]; snprintf(udBuf, sizeof(udBuf), "-%d to all enemies!", gs->anim.damage);
-                    sf::Text udT(udBuf, font, 24);
-                    udT.setFillColor(sf::Color(255, 240, 180, (sf::Uint8)(200 * alpha)));
-                    sf::FloatRect udb = udT.getLocalBounds();
-                    udT.setPosition(512 - udb.width/2, 380);
-                    window.draw(udT);
-                } else if (gs->anim.type == 7) {
-                    // DEATH — dark pulse
-                    sf::Uint8 a8 = (sf::Uint8)(180 * alpha);
-                    flash.setFillColor(sf::Color(80, 0, 0, a8));
-                    window.draw(flash);
-                    
+                    sf::RectangleShape fsFlash(sf::Vector2f(1024, 768)); fsFlash.setFillColor(sf::Color(255, 200, 0, a8)); window.draw(fsFlash);
+                    sf::Text ultT("ULTIMATE!", font, 64); ultT.setFillColor(sf::Color(255, 215, 0, (sf::Uint8)(255 * alpha))); ultT.setStyle(sf::Text::Bold);
+                    sf::FloatRect ub = ultT.getLocalBounds(); ultT.setPosition(512 - ub.width/2, 300); window.draw(ultT);
+                    char udBuf[32]; snprintf(udBuf, sizeof(udBuf), "-%d to all enemies!", snap.anim.damage);
+                    sf::Text udT(udBuf, font, 24); udT.setFillColor(sf::Color(255, 240, 180, (sf::Uint8)(200 * alpha)));
+                    sf::FloatRect udb = udT.getLocalBounds(); udT.setPosition(512 - udb.width/2, 380); window.draw(udT);
+                } else if (snap.anim.type == 7) {
+                    sf::Uint8 a8 = (sf::Uint8)(180 * alpha); flash.setFillColor(sf::Color(80, 0, 0, a8)); window.draw(flash);
                     char dBuf[64]; snprintf(dBuf, sizeof(dBuf), "DEFEATED!");
-                    sf::Text dT(dBuf, font, 32);
-                    dT.setFillColor(sf::Color(255, 60, 60, (sf::Uint8)(255 * alpha)));
-                    dT.setStyle(sf::Text::Bold);
-                    sf::FloatRect db = dT.getLocalBounds();
-                    dT.setPosition(cx - db.width/2, cy - 10);
-                    window.draw(dT);
+                    sf::Text dT(dBuf, font, 32); dT.setFillColor(sf::Color(255, 60, 60, (sf::Uint8)(255 * alpha))); dT.setStyle(sf::Text::Bold);
+                    sf::FloatRect db = dT.getLocalBounds(); dT.setPosition(cx - db.width/2, cy - 10); window.draw(dT);
                 }
-
-                if (gs->anim.timer <= 0) gs->anim.type = 0;
             }
 
-            // Wave Transition overlay
-            if (gs->wave_transition_timer > 0) {
-                sf::RectangleShape overlay(sf::Vector2f(1024, 768));
-                overlay.setFillColor(sf::Color(0, 0, 0, 200));
-                window.draw(overlay);
-
-                sf::Text st("SPAWNING NEXT WAVE...", font, 48);
-                st.setFillColor(CYAN_T);
-                st.setStyle(sf::Text::Bold);
-                sf::FloatRect sb = st.getLocalBounds();
-                st.setPosition(512 - sb.width/2, 280);
-                window.draw(st);
+            if (snap.wave_transition_timer > 0) {
+                sf::RectangleShape overlay(sf::Vector2f(1024, 768)); overlay.setFillColor(sf::Color(0, 0, 0, 200)); window.draw(overlay);
+                sf::Text st("SPAWNING NEXT WAVE...", font, 48); st.setFillColor(CYAN_T); st.setStyle(sf::Text::Bold);
+                sf::FloatRect sb = st.getLocalBounds(); st.setPosition(512 - sb.width/2, 280); window.draw(st);
             }
 
-            // Ultimate ASP Suspended Banner
-            if (gs->ultimate_active) {
+            if (snap.ultimate_active) {
                 float alpha = (sinf(time_acc * 8.0f) * 0.5f + 0.5f);
                 drawRoundedRect(window, 262, 50, 500, 40, sf::Color(150, 0, 0, 200), GOLD, 2);
-
                 sf::Text st("!!! ASP SUSPENDED - ENEMIES HALTED !!!", font, 18);
-                st.setFillColor(sf::Color(255, 200, 0, (sf::Uint8)(150 + 105 * alpha)));
-                st.setStyle(sf::Text::Bold);
-                sf::FloatRect sb = st.getLocalBounds();
-                st.setPosition(512 - sb.width/2, 58);
-                window.draw(st);
+                st.setFillColor(sf::Color(255, 200, 0, (sf::Uint8)(150 + 105 * alpha))); st.setStyle(sf::Text::Bold);
+                sf::FloatRect sb = st.getLocalBounds(); st.setPosition(512 - sb.width/2, 58); window.draw(st);
             }
 
-            // Weapon drop notification with clickable buttons
-            if (gs->weapon_drop.pending && !gs->weapon_drop.player_chose) {
+            if (snap.weapon_drop.pending && !snap.weapon_drop.player_chose) {
                 drawRoundedRect(window, 280, 250, 400, 160, sf::Color(10, 15, 30, 240), GOLD, 2);
-                sf::Text dt("WEAPON DROPPED!", font, 24);
-                dt.setFillColor(GOLD); dt.setStyle(sf::Text::Bold);
-                dt.setPosition(360, 265); window.draw(dt);
-
-                const Weapon* dw = get_weapon_by_id(gs->weapon_drop.weapon_id);
+                sf::Text dt("WEAPON DROPPED!", font, 24); dt.setFillColor(GOLD); dt.setStyle(sf::Text::Bold); dt.setPosition(360, 265); window.draw(dt);
+                const Weapon* dw = get_weapon_by_id(snap.weapon_drop.weapon_id);
                 if (dw) {
                     char b[64]; snprintf(b, sizeof(b), "%s (DMG: %d)", dw->name, dw->damage);
-                    sf::Text wt(b, font, 18); wt.setFillColor(TEXT_WHITE);
-                    wt.setPosition(360, 310); window.draw(wt);
+                    sf::Text wt(b, font, 18); wt.setFillColor(TEXT_WHITE); wt.setPosition(360, 310); window.draw(wt);
                 }
-
-                // Yes button
                 drawRoundedRect(window, 370, 355, 120, 35, sf::Color(20, 100, 20), HP_GREEN, 2);
-                sf::Text yesT("Pick Up", font, 14); yesT.setFillColor(TEXT_WHITE); yesT.setStyle(sf::Text::Bold);
-                yesT.setPosition(395, 362); window.draw(yesT);
+                sf::Text yesT("Pick Up", font, 14); yesT.setFillColor(TEXT_WHITE); yesT.setStyle(sf::Text::Bold); yesT.setPosition(395, 362); window.draw(yesT);
                 dropYesRect = sf::FloatRect(370, 355, 120, 35);
-                // No button
                 drawRoundedRect(window, 510, 355, 120, 35, sf::Color(100, 20, 20), HP_RED, 2);
-                sf::Text noT("Leave", font, 14); noT.setFillColor(TEXT_WHITE); noT.setStyle(sf::Text::Bold);
-                noT.setPosition(545, 362); window.draw(noT);
+                sf::Text noT("Leave", font, 14); noT.setFillColor(TEXT_WHITE); noT.setStyle(sf::Text::Bold); noT.setPosition(545, 362); window.draw(noT);
                 dropNoRect = sf::FloatRect(510, 355, 120, 35);
             }
 
-            // Relic drop notification with clickable buttons
-            if (gs->relic_drop.pending && !gs->relic_drop.player_chose) {
+            if (snap.relic_drop.pending && !snap.relic_drop.player_chose) {
                 drawRoundedRect(window, 280, 250, 400, 160, sf::Color(30, 10, 30, 240), sf::Color(150, 80, 255), 2);
-                sf::Text dt("ECLIPSE RELIC REVEALED!", font, 20);
-                dt.setFillColor(sf::Color(200, 120, 255)); dt.setStyle(sf::Text::Bold);
-                dt.setPosition(320, 265); window.draw(dt);
-
-                sf::Text wt("A legendary artifact appears...", font, 16);
-                wt.setFillColor(TEXT_WHITE);
-                wt.setPosition(340, 310); window.draw(wt);
-
-                // Yes button
+                sf::Text dt("ECLIPSE RELIC REVEALED!", font, 20); dt.setFillColor(sf::Color(200, 120, 255)); dt.setStyle(sf::Text::Bold); dt.setPosition(320, 265); window.draw(dt);
+                sf::Text wt("A legendary artifact appears...", font, 16); wt.setFillColor(TEXT_WHITE); wt.setPosition(340, 310); window.draw(wt);
                 drawRoundedRect(window, 370, 355, 120, 35, sf::Color(80, 20, 150), sf::Color(150, 80, 255), 2);
-                sf::Text yesT("Claim", font, 14); yesT.setFillColor(TEXT_WHITE); yesT.setStyle(sf::Text::Bold);
-                yesT.setPosition(405, 362); window.draw(yesT);
+                sf::Text yesT("Claim", font, 14); yesT.setFillColor(TEXT_WHITE); yesT.setStyle(sf::Text::Bold); yesT.setPosition(405, 362); window.draw(yesT);
                 relicYesRect = sf::FloatRect(370, 355, 120, 35);
-                // No button
                 drawRoundedRect(window, 510, 355, 120, 35, sf::Color(100, 20, 20), HP_RED, 2);
-                sf::Text noT("Leave", font, 14); noT.setFillColor(TEXT_WHITE); noT.setStyle(sf::Text::Bold);
-                noT.setPosition(545, 362); window.draw(noT);
+                sf::Text noT("Leave", font, 14); noT.setFillColor(TEXT_WHITE); noT.setStyle(sf::Text::Bold); noT.setPosition(545, 362); window.draw(noT);
                 relicNoRect = sf::FloatRect(510, 355, 120, 35);
             }
         }
-
-        sem_post(&gs->mutex);
         window.display();
     }
     return NULL;
