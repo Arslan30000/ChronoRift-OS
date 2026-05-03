@@ -106,16 +106,18 @@ int main() {
     state->total_spawned = state->num_enemies;
 
     // Initialize enemies with roll-number formulas
-    for (int i = 0; i < state->num_enemies; i++) {
+    for (int i = 0; i < MAX_ENEMIES; i++) {    
         state->enemies[i].id = i;
         strncpy(state->enemies[i].name, ENEMY_NAMES[i], 31);
-        state->enemies[i].max_hp = ROLL_LAST_TWO + (rand() % 151 + 50); // 72 + rand(50..200)
+        state->enemies[i].max_hp = ROLL_LAST_TWO + (rand() % 151 + 50);
         state->enemies[i].hp = state->enemies[i].max_hp;
-        state->enemies[i].damage = ROLL_SECOND_LAST + 10;               // 7 + 10 = 17
-        state->enemies[i].speed = rand() % 21 + 10;                     // rand(10..30)
+        state->enemies[i].damage = ROLL_SECOND_LAST + 10;
+        state->enemies[i].speed = rand() % 21 + 10;
         state->enemies[i].stamina = 0;
         state->enemies[i].max_stamina = 150;
-        state->enemies[i].is_alive = true;
+        
+        state->enemies[i].is_alive = (i < state->num_enemies); 
+        
         state->enemies[i].is_stunned = false;
         state->enemies[i].stun_start = 0;
         memset(&state->enemies[i].inv, 0, sizeof(Inventory));

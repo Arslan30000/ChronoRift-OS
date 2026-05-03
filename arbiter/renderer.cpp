@@ -103,7 +103,7 @@ static void drawEnemySprite(sf::RenderWindow& w, float cx, float cy, sf::Color c
 
 // ===================== ENTITY CARD =====================
 static void drawEntityCard(sf::RenderWindow& win, sf::Font& font, Entity* e, float x, float y, float w, float h,
-                           bool isPlayer, bool isActive, sf::Sprite* pngSprite = NULL, sf::Sprite** wpSprs = NULL, int numWp = 0, int* unique_wps = NULL, int selected_wp = 0, float time_acc = 0) {
+                           bool isPlayer, bool isActive, sf::Sprite* pngSprite = NULL, sf::Sprite** wpSprs = NULL, int numWp = 0, int* unique_wps = NULL, int selected_wp = 0, float time_acc = 0, sf::Sprite* deathSprite = NULL) {
     // Stun shaking effect
     if (e->is_alive && e->is_stunned) {
         x += sinf(time_acc * 30.0f) * 3.0f;
@@ -124,15 +124,21 @@ static void drawEntityCard(sf::RenderWindow& win, sf::Font& font, Entity* e, flo
 
     // Sprite — use PNG if available, else geometric fallback
     float spX = x + 40, spY = y + 48;
-    if (pngSprite && e->is_alive) {
+    if (!e->is_alive && deathSprite) {
+        deathSprite->setPosition(x + 5, y + 4);
+        sf::FloatRect bounds = deathSprite->getLocalBounds();
+        if (bounds.width > 0 && bounds.height > 0) {
+            deathSprite->setScale(64.f / bounds.width, 72.f / bounds.height);
+        }
+        win.draw(*deathSprite);
+    } else if (pngSprite && e->is_alive) {
         pngSprite->setPosition(x + 5, y + 4);
         // Scale to fit 64x72 area
         sf::FloatRect bounds = pngSprite->getLocalBounds();
         if (bounds.width > 0 && bounds.height > 0) {
             pngSprite->setScale(64.f / bounds.width, 72.f / bounds.height);
         }
-        if (!e->is_alive) pngSprite->setColor(sf::Color(100,100,100,150));
-        else if (e->is_stunned) pngSprite->setColor(sf::Color(255,255,100,200));
+        if (e->is_stunned) pngSprite->setColor(sf::Color(255,255,100,200));
         else pngSprite->setColor(sf::Color::White);
         win.draw(*pngSprite);
     } else {
@@ -241,30 +247,23 @@ void* render_thread_func(void* arg) {
     sf::Font font;
     font.loadFromFile("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf");
 
-    // ===== SPRITESHEET + PNG LOADING =====
-    // The renderer supports TWO methods for loading art:
-    //
-    // METHOD 1 (Spritesheet): Place a single spritesheet PNG and define crop
-    //   rectangles below. This is ideal for tilesets and sprite atlases.
-    //   Files:  assets/characters.png   — all player + enemy sprites
-    //           assets/items.png        — all weapon/item icons
-    //           assets/background.png   — full 1024x720 background
-    //           assets/title.png        — 600x200 title logo
-    //
-    // METHOD 2 (Individual PNGs): Place individual files as before:
-    //   assets/player_0.png .. player_3.png   (64x80 each)
-    //   assets/enemy_0.png  .. enemy_8.png    (64x80 each)
-    //   assets/weapon_1.png .. weapon_5.png   (32x32 each)
-    //
-    // The code tries spritesheets first, then individual files, then geometric shapes.
-    // =====================================================================
+    
+    
 
     // --- Background & Title (individual files) ---
     sf::Texture bgTex;      bool hasBg = bgTex.loadFromFile("assets/background.png");
-    sf::Sprite  bgSprite;    if (hasBg) bgSprite.setTexture(bgTex);
+    sf::Sprite  bgSprite;    
+    if (hasBg) {
+        bgSprite.setTexture(bgTex);
+        sf::Vector2u sz = bgTex.getSize();
+        bgSprite.setScale(1024.0f / sz.x, 768.0f / sz.y);
+    }
 
     sf::Texture titleTex;    bool hasTitle = titleTex.loadFromFile("assets/title.png");
     sf::Sprite  titleSprite; if (hasTitle) titleSprite.setTexture(titleTex);
+
+    sf::Texture deathTex;    bool hasDeath = deathTex.loadFromFile("assets/death.png");
+    sf::Sprite  deathSpr;    if (hasDeath) deathSpr.setTexture(deathTex);
 
     // --- Character Spritesheet ---
     // ┌──────────────────────────────────────────────────────────────────┐
@@ -275,37 +274,34 @@ void* render_thread_func(void* arg) {
     sf::Texture charSheet;
     bool hasCharSheet = charSheet.loadFromFile("assets/characters.png");
 
-    // Player sprite crop regions (x, y, w, h) from characters.png
-    // Your spritesheet: single row of characters, each ~16x16 pixels
-    // First 4 characters = heroes, next 5+ = enemies
-    // *** ADJUST these if your sprites are a different size! ***
+   
+    
     int SW = 16, SH = 16; // Sprite width/height — change to match your sheet
     sf::IntRect playerRect[MAX_PLAYERS] = {
-        sf::IntRect(SW*0, 0, SW, SH),   // P0 - Aether  (1st character)
-        sf::IntRect(SW*1, 0, SW, SH),   // P1 - Blaze   (2nd character)
-        sf::IntRect(SW*2, 0, SW, SH),   // P2 - Cryo    (3rd character)
-        sf::IntRect(SW*3, 0, SW, SH),   // P3 - Dawn    (4th character)
+        sf::IntRect(SW*0, 0, SW, SH),   // P0 - Aether  (Char 1, Frame 1)
+        sf::IntRect(SW*2, 0, SW, SH),   // P1 - Blaze   (Char 2, Frame 1)
+        sf::IntRect(SW*4, 0, SW, SH),   // P2 - Cryo    (Char 3, Frame 1)
+        sf::IntRect(SW*6, 0, SW, SH),   // P3 - Dawn    (Char 4, Frame 1)
     };
 
-    // Enemy sprite crop regions — cycle through the 2 working sprites (5th & 6th)
+    // Enemy sprite crop regions — Use Row 2 and remaining Row 1 frames
     sf::IntRect enemyRect[MAX_ENEMIES] = {
-        sf::IntRect(SW*4, 0, SW, SH),   // E0 - Shade
-        sf::IntRect(SW*5, 0, SW, SH),   // E1 - Wraith
-        sf::IntRect(SW*4, 0, SW, SH),   // E2 - Ghoul    (reuse 5th)
-        sf::IntRect(SW*5, 0, SW, SH),   // E3 - Specter  (reuse 6th)
-        sf::IntRect(SW*4, 0, SW, SH),   // E4 - Phantom  (reuse 5th)
-        sf::IntRect(SW*5, 0, SW, SH),   // E5 - Revenant (reuse 6th)
-        sf::IntRect(SW*4, 0, SW, SH),   // E6 - Banshee  (reuse 5th)
-        sf::IntRect(SW*5, 0, SW, SH),   // E7 - Lich     (reuse 6th)
-        sf::IntRect(SW*4, 0, SW, SH),   // E8 - Dread    (reuse 5th)
+        sf::IntRect(SW*0, SH, SW, SH),  // E0 - Shade      (Row 2, Sprite 1)
+        sf::IntRect(SW*1, SH, SW, SH),  // E1 - Wraith     (Row 2, Sprite 2)
+        sf::IntRect(SW*2, SH, SW, SH),  // E2 - Ghoul      (Row 2, Sprite 3)
+        sf::IntRect(SW*3, SH, SW, SH),  // E3 - Specter    (Row 2, Sprite 4)
+        sf::IntRect(SW*4, SH, SW, SH),  // E4 - Phantom    (Row 2, Sprite 5)
+        sf::IntRect(SW*5, SH, SW, SH),  // E5 - Revenant   (Row 2, Sprite 6)
+        sf::IntRect(SW*6, SH, SW, SH),  // E6 - Banshee    (Row 2, Sprite 7)
+        sf::IntRect(SW*1, 0,  SW, SH),  // E7 - Lich       (Row 1, Sprite 2)
+        sf::IntRect(SW*3, 0,  SW, SH),  // E8 - Dread      (Row 1, Sprite 4)
     };
 
-    // --- Item/Weapon Spritesheet ---
+
     sf::Texture itemSheet;
     bool hasItemSheet = itemSheet.loadFromFile("assets/items.png");
 
-    // Weapon icon crop regions from items.png
-    // Default: assumes 5 weapons in a row, each 16x16
+
     sf::IntRect weaponRect[NUM_WEAPONS] = {
         sf::IntRect(0,  0, 16, 16),    // W1 - Solar Core
         sf::IntRect(16, 0, 16, 16),    // W2 - Lunar Blade
@@ -325,7 +321,6 @@ void* render_thread_func(void* arg) {
             playerSpr[i].setTextureRect(playerRect[i]);
             hasPlayer[i] = true;
         } else {
-            // Fallback: try individual file
             char path[64]; snprintf(path, sizeof(path), "assets/player_%d.png", i);
             hasPlayer[i] = playerTex[i].loadFromFile(path);
             if (hasPlayer[i]) playerSpr[i].setTexture(playerTex[i]);
@@ -692,7 +687,7 @@ void* render_thread_func(void* arg) {
                     hl_wp = unique_wp[0];
                 }
                 
-                drawEntityCard(window, font, &gs->players[i], px, py, cardW, cardH, true, active, spr, wSprites, wCount, unique_wp, hl_wp, time_acc);
+                drawEntityCard(window, font, &gs->players[i], px, py, cardW, cardH, true, active, spr, wSprites, wCount, unique_wp, hl_wp, time_acc, hasDeath ? &deathSpr : NULL);
                 playerCardRects[i] = sf::FloatRect(px, py, cardW, cardH);
                 
                 if (active) {
@@ -742,9 +737,9 @@ void* render_thread_func(void* arg) {
                 int hl_wp = (wCount > 0) ? unique_wp[0] : 0;
                 
                 if (i >= 4) {
-                    drawEntityCard(window, font, &gs->enemies[i], 800, 72 + (i - 4) * (cardH + 8), 210, cardH, false, active, spr, wSprites, wCount, unique_wp, hl_wp, time_acc);
+                    drawEntityCard(window, font, &gs->enemies[i], 800, 72 + (i - 4) * (cardH + 8), 210, cardH, false, active, spr, wSprites, wCount, unique_wp, hl_wp, time_acc, hasDeath ? &deathSpr : NULL);
                 } else {
-                    drawEntityCard(window, font, &gs->enemies[i], 540, ey, 245, cardH, false, active, spr, wSprites, wCount, unique_wp, hl_wp, time_acc);
+                    drawEntityCard(window, font, &gs->enemies[i], 540, ey, 245, cardH, false, active, spr, wSprites, wCount, unique_wp, hl_wp, time_acc, hasDeath ? &deathSpr : NULL);
                 }
             }
 
